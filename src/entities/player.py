@@ -1,6 +1,6 @@
 import os
 import pygame
-from sprite_sheet import SpriteSheet
+from graphics.sprite_sheet import SpriteSheet
 
 
 class Player:
@@ -26,7 +26,7 @@ class Player:
 
         # Sprite sheet setup
         if sprite_path is None:
-            sprite_path = os.path.join('assets', 'sprites', 'Octavio Mesa.png')
+            sprite_path = os.path.join('..','assets', 'sprites', 'Octavio Mesa.png')
         sprite_path = sprite_path.replace('\\', '/')
         self.sprite_size = sprite_size
         self.unarmed_row = unarmed_row
