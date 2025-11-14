@@ -1,3 +1,6 @@
+from core.settings import MAP_WIDTH_PX, MAP_HEIGHT_PX
+
+
 class Camera:
     def __init__(self, screen_width, screen_height):
         self.x = 0
@@ -11,8 +14,8 @@ class Camera:
         self.y = int(target.y + target.height / 2 - self.screen_height / 2)
 
         # Limitar movimiento de cámara para no mostrar más allá del mapa
-        map_width = 50 * 32
-        map_height = 50 * 32
+        map_width = MAP_WIDTH_PX
+        map_height = MAP_HEIGHT_PX
 
         self.x = max(0, min(self.x, map_width - self.screen_width))
         self.y = max(0, min(self.y, map_height - self.screen_height))

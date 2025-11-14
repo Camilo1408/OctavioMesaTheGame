@@ -2,10 +2,12 @@ import os
 import pygame
 import random
 from perlin_noise import PerlinNoise
+from core.settings import TILE_SIZE, MAP_WIDTH_TILES, MAP_HEIGHT_TILES
+
 
 
 class TileMap:
-    def __init__(self, tile_size=32, width=50, height=50):
+    def __init__(self, tile_size=TILE_SIZE, width=MAP_WIDTH_TILES, height=MAP_HEIGHT_TILES):
         self.tile_size = tile_size
         self.width = width
         self.height = height

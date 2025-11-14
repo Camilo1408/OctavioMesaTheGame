@@ -1,11 +1,16 @@
 import os
 import pygame
 from graphics.sprite_sheet import SpriteSheet
+from core.settings import MAP_WIDTH_PX, MAP_HEIGHT_PX, PLAYER_MAX_HEALTH
+
 
 
 class Player:
     def __init__(self, x, y, sprite_path=None, sprite_size=64, unarmed_row=39, armed_row=10, frames_per_direction=None, row_index_base=0):
         """Player with configurable sprite sheet layout."""
+        self.max_health = PLAYER_MAX_HEALTH
+        self.health = self.max_health
+
         self.x = x
         self.y = y
         self.width = sprite_size
@@ -15,6 +20,8 @@ class Player:
         self.is_attacking = False
         self.attack_duration = 0.35
         self.attack_timer = 0.0
+        self.attack_damage = 25   # puedes tunear esto
+
         self.movement = {'up': False, 'down': False, 'left': False, 'right': False}
 
         # Hitbox más pequeña (centrada)
@@ -52,7 +59,7 @@ class Player:
             'unarmed': {'idle': [], 'walk_up': [], 'walk_left': [], 'walk_down': [], 'walk_right': [],
                         'attack_up': [], 'attack_left': [], 'attack_down': [], 'attack_right': []},
             'armed': {'idle': [], 'walk_up': [], 'walk_left': [], 'walk_down': [], 'walk_right': [],
-                      'attack_up': [], 'attack_left': [], 'attack_down': [], 'attack_right': []},
+                    'attack_up': [], 'attack_left': [], 'attack_down': [], 'attack_right': []},
             'idle': {'unarmed': {}, 'armed': {}}
         }
 
@@ -219,8 +226,8 @@ class Player:
         self.y += dy * self.speed
 
         # 🧱 LIMITES DEL MAPA
-        map_width = 50 * 32
-        map_height = 50 * 32
+        map_width = MAP_WIDTH_PX
+        map_height = MAP_HEIGHT_PX
         collided = not self.clamp_to_map(map_width, map_height)
 
         # Determinar si realmente se movió
@@ -287,3 +294,57 @@ class Player:
 
     def toggle_weapon(self):
         self.is_armed = not self.is_armed
+
+    def get_attack_hitbox(self):
+        """Devuelve un Rect con el área de impacto del ataque (o None si no hay ataque activo)."""
+        if not self.is_attacking:
+            return None
+
+        import pygame
+
+        # Usamos la hitbox reducida como base
+        base_rect = pygame.Rect(
+            self.x + self.hitbox_offset_x,
+            self.y + self.hitbox_offset_y,
+            self.hitbox_width,
+            self.hitbox_height,
+        )
+
+        # Tamaño del área de ataque (ligeramente mayor que la hitbox)
+        atk_width = self.hitbox_width
+        atk_height = self.hitbox_height
+
+        if self.facing == 'up':
+            return pygame.Rect(
+                base_rect.centerx - atk_width // 2,
+                base_rect.top - atk_height,
+                atk_width,
+                atk_height,
+            )
+        elif self.facing == 'down':
+            return pygame.Rect(
+                base_rect.centerx - atk_width // 2,
+                base_rect.bottom,
+                atk_width,
+                atk_height,
+            )
+        elif self.facing == 'left':
+            return pygame.Rect(
+                base_rect.left - atk_width,
+                base_rect.centery - atk_height // 2,
+                atk_width,
+                atk_height,
+            )
+        elif self.facing == 'right':
+            return pygame.Rect(
+                base_rect.right,
+                base_rect.centery - atk_height // 2,
+                atk_width,
+                atk_height,
+            )
+        return None
+
+    def take_damage(self, amount: float):
+        self.health -= amount
+        if self.health < 0:
+            self.health = 0
