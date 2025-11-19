@@ -8,8 +8,7 @@ from core.game_state import GameState
 from core.settings import (
     SCREEN_HEIGTH, SCREEN_WIDTH, FPS, WINDOW_TITLE, COLOR_BG,
     ENEMY_INITIAL_SPAWN_INTERVAL, ENEMY_MIN_SPAWN_INTERVAL,
-    ENEMY_SPAWN_INTERVAL_STEP, ENEMY_MAX_ON_SCREEN_BASE,
-    ENEMY_MAX_ON_SCREEN_STEP, KILLS_PER_LEVEL
+    ENEMY_SPAWN_INTERVAL_STEP, ENEMY_MAX_ON_SCREEN_BASE, PLAYER_STAT_MAX_LEVEL, ENEMIES_PER_LEVEL, MAX_PLAYER_LEVEL
 )
 
 
@@ -29,6 +28,10 @@ class Game:
         self.kills = 0        # total de enemigos derrotados
         self.score = 0        # puntos
 
+        # Flag para menú de subida de nivel
+        self.pending_level_up_choice = False
+
+        self.max_enemies_on_screen = ENEMY_MAX_ON_SCREEN_BASE
 
         # Tiempo de partida (en segundos)
         self.run_time = 0.0
@@ -49,12 +52,16 @@ class Game:
                             unarmed_row=39,
                             armed_row=9,
                             row_index_base=1)
+        
+        self.level = self.player.level  # sincronizar nivel del juego con nivel del jugador
+
         self.camera = Camera(SCREEN_WIDTH, SCREEN_HEIGTH)
         self.tile_map = TileMap(tile_size=32, width=50, height=50)
         self.tile_map.build_map()
         # ---- Enemigos ----
         self.enemies = []
         # Enemigos se crean cuando realmente empieza la partida
+  # sincronizar nivel del juego con nivel del jugador
 
 
     def save_current_run_summary(self):
@@ -84,10 +91,24 @@ class Game:
         self.score = 0
         self.run_time = 0.0      # 👈 tiempo de partida
 
-        self.enemies = []
-        self.spawn_timer = 0.0
-        self.spawn_interval = ENEMY_INITIAL_SPAWN_INTERVAL
+                # Resetear progresión del jugador
+        from core.settings import PLAYER_XP_BASE
+
+        self.player.level = 1
+        self.player.xp = 0
+        self.player.xp_to_next = PLAYER_XP_BASE
+
+        self.player.move_level = 1
+        self.player.strength_level = 1
+        self.player.range_level = 1
+        self.player.resistance_level = 1
+
+        self.player.recalculate_stats()
+        self.level = self.player.level
+        self.pending_level_up_choice = False
+
         self.max_enemies_on_screen = ENEMY_MAX_ON_SCREEN_BASE
+        self.spawn_interval = ENEMY_INITIAL_SPAWN_INTERVAL
 
 
     def start_game(self):
@@ -114,7 +135,18 @@ class Game:
                 if dx * dx + dy * dy > (TILE_SIZE * 10) ** 2:
                     break
 
-            self.enemies.append(Enemy(x, y))
+            from core.settings import (
+                ENEMY_BASE_HEALTH, ENEMY_BASE_DAMAGE,
+                ENEMY_HEALTH_GROWTH, ENEMY_DAMAGE_GROWTH,
+            )
+
+            # Factor según nivel actual del jugador
+            level_index = max(0, self.player.level - 1)
+            health = int(ENEMY_BASE_HEALTH * (ENEMY_HEALTH_GROWTH ** level_index))
+            damage = ENEMY_BASE_DAMAGE * (ENEMY_DAMAGE_GROWTH ** level_index)
+
+            enemy = Enemy(x, y, health=health, damage=damage)
+            self.enemies.append(enemy) 
 
 
 
@@ -133,16 +165,25 @@ class Game:
                         self.player.toggle_weapon()
 
                 elif self.state == GameState.PAUSED:
-                    if event.key == pygame.K_ESCAPE:
-                        # ESC reanuda
-                        self.state = GameState.RUNNING
-                    elif event.key == pygame.K_RETURN:
-                        # ENTER también reanuda
-                        self.state = GameState.RUNNING
-                    elif event.key == pygame.K_m:
-                        # M → guardar resumen y volver al menú principal
-                        self.save_current_run_summary()
-                        self.state = GameState.MENU
+                    if self.pending_level_up_choice:
+                        # Menú de subida de nivel: obligar a elegir 1–4
+                        if event.key == pygame.K_1:
+                            self.apply_stat_upgrade("move")
+                        elif event.key == pygame.K_2:
+                            self.apply_stat_upgrade("strength")
+                        elif event.key == pygame.K_3:
+                            self.apply_stat_upgrade("range")
+                        elif event.key == pygame.K_4:
+                            self.apply_stat_upgrade("resistance")
+                        # Ignoramos ESC/ENTER mientras haya elección pendiente
+                    else:
+                        # Pausa normal
+                        if event.key == pygame.K_ESCAPE or event.key == pygame.K_RETURN:
+                            self.state = GameState.RUNNING
+                        elif event.key == pygame.K_m:
+                            self.save_current_run_summary()
+                            self.state = GameState.MENU
+
 
                 elif self.state == GameState.MENU:
                     if event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
@@ -195,7 +236,7 @@ class Game:
                 continue
             if player_rect.colliderect(enemy.rect):
                 # daño por contacto muy simple
-                self.player.take_damage(0.3)  # daño por frame, se escala con FPS
+                self.player.take_damage(enemy.damage * (1 / FPS))
 
     def handle_player_attack_collisions(self):
         atk_rect = self.player.get_attack_hitbox()
@@ -216,13 +257,41 @@ class Game:
         self.enemies = [e for e in self.enemies if e.alive]
 
         # Actualizar estadísticas
-        if killed_now > 0:
-            self.kills += killed_now           # contador de bajas
-            self.score += killed_now * 10      # por ejemplo 10 puntos por kill
+        from core.settings import XP_PER_KILL
 
-            # Revisar subida de nivel
-            while self.kills >= self.level * KILLS_PER_LEVEL:
-                self.level_up()
+        if killed_now > 0:
+            self.kills += killed_now
+            self.score += killed_now * 10
+
+            total_xp = killed_now * XP_PER_KILL
+            self.give_xp_to_player(total_xp)
+
+    def give_xp_to_player(self, amount: int):
+        from core.settings import PLAYER_XP_GROWTH, MAX_PLAYER_LEVEL
+
+        # Si ya alcanzó el nivel máximo, no acumulamos más XP para subir
+        if self.player.level >= MAX_PLAYER_LEVEL:
+            return
+
+        self.player.xp += amount
+
+        # Mientras tengamos XP suficiente y no hayamos llegado al nivel máximo
+        while (
+            self.player.level < MAX_PLAYER_LEVEL
+            and self.player.xp >= self.player.xp_to_next
+        ):
+            # Restar la XP requerida para este nivel
+            self.player.xp -= self.player.xp_to_next
+
+            # Subir nivel (esto ajusta spawn, etc.)
+            self.level_up()
+
+            # Incrementar la XP requerida para el siguiente nivel (+15%)
+            self.player.xp_to_next = int(self.player.xp_to_next * PLAYER_XP_GROWTH)
+
+            # Activar menú de mejora
+            self.pending_level_up_choice = True
+            self.state = GameState.PAUSED
 
 
 
@@ -253,23 +322,112 @@ class Game:
             if dx * dx + dy * dy > (TILE_SIZE * 8) ** 2:
                 break
 
-        self.enemies.append(Enemy(x, y))
-
-    def level_up(self):
-        self.level += 1
-
-        # Hacer el spawn un poco más rápido, pero con mínimo
-        self.spawn_interval = max(
-            ENEMY_MIN_SPAWN_INTERVAL,
-            self.spawn_interval - ENEMY_SPAWN_INTERVAL_STEP
+        from core.settings import (
+            ENEMY_BASE_HEALTH, ENEMY_BASE_DAMAGE,
+            ENEMY_HEALTH_GROWTH, ENEMY_DAMAGE_GROWTH,
         )
 
-        # Permitir más enemigos en pantalla
-        self.max_enemies_on_screen += ENEMY_MAX_ON_SCREEN_STEP
+        # Factor según nivel actual del jugador
+        level_index = max(0, self.player.level - 1)
+        health = int(ENEMY_BASE_HEALTH * (ENEMY_HEALTH_GROWTH ** level_index))
+        damage = ENEMY_BASE_DAMAGE * (ENEMY_DAMAGE_GROWTH ** level_index)
 
-        # Bonus de puntos por subir de nivel
+        enemy = Enemy(x, y, health=health, damage=damage)
+        self.enemies.append(enemy)
+
+
+
+    def level_up(self):
+        if self.player.level >= MAX_PLAYER_LEVEL:
+            return
+
+        # Subir nivel de jugador y sincronizar
+        self.player.level += 1
+        self.level = self.player.level
+
+        # Spawn más rápido (como ya tenías)
+        self.spawn_interval = max(
+            ENEMY_MIN_SPAWN_INTERVAL,
+            self.spawn_interval - ENEMY_SPAWN_INTERVAL_STEP,
+        )
+
+        # +5 enemigos máximos en pantalla por nivel
+        self.max_enemies_on_screen += ENEMIES_PER_LEVEL
+
+        # Bonus de score por subir
         self.score += 50
 
+    def apply_stat_upgrade(self, stat_key: str):
+        from core.settings import PLAYER_STAT_MAX_LEVEL
+        p = self.player
+
+        upgraded = False  # flag para saber si se mejoró algo
+
+        if stat_key == "move" and p.move_level < PLAYER_STAT_MAX_LEVEL:
+            p.move_level += 1
+            upgraded = True
+        elif stat_key == "strength" and p.strength_level < PLAYER_STAT_MAX_LEVEL:
+            p.strength_level += 1
+            upgraded = True
+        elif stat_key == "range" and p.range_level < PLAYER_STAT_MAX_LEVEL:
+            p.range_level += 1
+            upgraded = True
+        elif stat_key == "resistance" and p.resistance_level < PLAYER_STAT_MAX_LEVEL:
+            p.resistance_level += 1
+            upgraded = True
+
+        # Si NO se pudo mejorar (ya estaba en el nivel máximo), salimos sin cerrar el menú
+        if not upgraded:
+            return
+
+        # Si sí se mejoró algo, recalculamos y cerramos menú
+        p.recalculate_stats()
+        self.pending_level_up_choice = False
+        self.state = GameState.RUNNING
+
+    def draw_level_up_menu(self):
+        import pygame
+
+        # Dibujar juego de fondo
+        self.draw_game()
+
+        # Overlay oscuro
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGTH), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180))
+        self.screen.blit(overlay, (0, 0))
+
+        font_title = pygame.font.SysFont("arial", 32, bold=True)
+        font_opt = pygame.font.SysFont("arial", 22)
+        font_hint = pygame.font.SysFont("arial", 18)
+
+        title = font_title.render("¡Subes de nivel!", True, (255, 255, 255))
+        hint = font_hint.render("Elige una mejora: 1-MOV  2-Fuerza  3-Rango  4-Resistencia", True, (220, 220, 220))
+
+        cx = SCREEN_WIDTH // 2
+        cy = SCREEN_HEIGTH // 2
+
+        self.screen.blit(title, (cx - title.get_width() // 2, cy - 150))
+        self.screen.blit(hint, (cx - hint.get_width() // 2, cy + 100))
+
+        from core.settings import PLAYER_STAT_MAX_LEVEL
+
+        p = self.player
+
+        def label(stat_name, current_level):
+            if current_level >= PLAYER_STAT_MAX_LEVEL:
+                return f"{stat_name} (nivel: {current_level}) [MAX]"
+            return f"{stat_name} (nivel: {current_level})"
+
+        options = [
+            f"1) {label('Movimiento', p.move_level)}",
+            f"2) {label('Fuerza', p.strength_level)}",
+            f"3) {label('Rango', p.range_level)}",
+            f"4) {label('Resistencia', p.resistance_level)}",
+]
+
+        for i, text in enumerate(options):
+            surf = font_opt.render(text, True, (255, 255, 255))
+            self.screen.blit(surf, (cx - surf.get_width() // 2, cy - 60 + i * 30))
 
 
     def draw(self):
@@ -280,7 +438,10 @@ class Game:
         elif self.state == GameState.RUNNING:
             self.draw_game()
         elif self.state == GameState.PAUSED:
-            self.draw_pause_menu()
+            if self.pending_level_up_choice:
+                self.draw_level_up_menu()
+            else:
+                self.draw_pause_menu()
         elif self.state == GameState.GAME_OVER:
             self.draw_game_over()
 
@@ -399,6 +560,17 @@ class Game:
 
         self.screen.blit(txt_level, (margin, margin + bar_height + 8))
         self.screen.blit(txt_score, (margin, margin + bar_height + 8 + txt_level.get_height()))
+
+        txt_xp = font.render(
+            f"XP: {int(self.player.xp)}/{self.player.xp_to_next}",
+            True,
+            (180, 200, 255)
+        )
+        self.screen.blit(
+            txt_xp,
+            (margin, margin + bar_height + 8 + txt_level.get_height() + txt_score.get_height())
+        )
+
 
 
     def draw_menu(self):

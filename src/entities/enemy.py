@@ -1,12 +1,15 @@
 import pygame
 import random
 from entities.entity import Entity
-from core.settings import TILE_SIZE, ENEMY_BASE_HEALTH
+from core.settings import TILE_SIZE, ENEMY_BASE_HEALTH, ENEMY_BASE_DAMAGE
 
 class Enemy(Entity):
-    def __init__(self, x, y):
+    def __init__(self, x, y, health=None, damage=None):
         super().__init__(x, y, TILE_SIZE, TILE_SIZE, speed=2.0)
-        self.health = ENEMY_BASE_HEALTH
+        self.max_health = health if health is not None else ENEMY_BASE_HEALTH
+        self.health = self.max_health
+
+        self.damage = damage if damage is not None else ENEMY_BASE_DAMAGE
 
         # Por ahora: un simple círculo rojo como sprite
         self.image = pygame.Surface((self.width, self.height), pygame.SRCALPHA)

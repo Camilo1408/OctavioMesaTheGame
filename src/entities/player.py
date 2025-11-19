@@ -22,6 +22,45 @@ class Player:
         self.attack_timer = 0.0
         self.attack_damage = 25   # puedes tunear esto
 
+                # --- Sprint 2: stats base de combate ---
+        from core.settings import (
+            FIST_BASE_DAMAGE, MACHETE_BASE_DAMAGE,
+            FIST_BASE_RANGE, MACHETE_BASE_RANGE,
+        )
+
+        # Daños base de cada arma
+        self.base_attack_damage_unarmed = FIST_BASE_DAMAGE
+        self.base_attack_damage_armed = MACHETE_BASE_DAMAGE
+
+        # Rango base de cada arma (multiplicador sobre la hitbox)
+        self.base_range_unarmed = FIST_BASE_RANGE
+        self.base_range_armed = MACHETE_BASE_RANGE
+
+        # Multiplicador de rango actual (se recalcula según arma y stats)
+        self.attack_range_multiplier = self.base_range_unarmed
+
+                # --- Sprint 3: progresión y árbol de habilidades ---
+        from core.settings import PLAYER_XP_BASE
+
+        # Nivel general del jugador
+        self.level = 1
+        self.xp = 0
+        self.xp_to_next = PLAYER_XP_BASE
+
+        # Niveles de cada stat (1 a 3)
+        self.move_level = 1
+        self.strength_level = 1
+        self.range_level = 1
+        self.resistance_level = 1
+
+        # Stats base de movimiento y defensa
+        self.base_speed = self.speed          # 5, de arriba
+        self.damage_taken_multiplier = 1.0    # 1.0 = daño normal
+
+        # Inicializar stats derivados
+        self.recalculate_stats()
+
+
         self.movement = {'up': False, 'down': False, 'left': False, 'right': False}
 
         # Hitbox más pequeña (centrada)
@@ -294,6 +333,49 @@ class Player:
 
     def toggle_weapon(self):
         self.is_armed = not self.is_armed
+        self.recalculate_stats() 
+
+        # Actualizar daño y rango según arma actual
+        if self.is_armed:
+            base_damage = self.base_attack_damage_armed
+            base_range = self.base_range_armed
+        else:
+            base_damage = self.base_attack_damage_unarmed
+            base_range = self.base_range_unarmed
+
+        self.attack_damage = base_damage
+        self.attack_range_multiplier = base_range
+
+    def recalculate_stats(self):
+        """Recalcula velocidad, daño, rango y resistencia según niveles y arma."""
+        # --- MOVIMIENTO ---
+        # +15% de velocidad por nivel de movimiento
+        speed_bonus = 0.15 * (self.move_level - 1)
+        self.speed = self.base_speed * (1.0 + speed_bonus)
+
+        # --- DAÑO Y RANGO BASE SEGÚN ARMA ACTUAL ---
+        if self.is_armed:
+            base_damage = self.base_attack_damage_armed
+            base_range = self.base_range_armed
+        else:
+            base_damage = self.base_attack_damage_unarmed
+            base_range = self.base_range_unarmed
+
+        # --- FUERZA ---
+        # +20% daño por nivel de fuerza
+        strength_bonus = 0.20 * (self.strength_level - 1)
+        self.attack_damage = base_damage * (1.0 + strength_bonus)
+
+        # --- RANGO ---
+        # +15% rango por nivel de rango
+        range_bonus = 0.15 * (self.range_level - 1)
+        self.attack_range_multiplier = base_range * (1.0 + range_bonus)
+
+        # --- RESISTENCIA ---
+        # -15% daño recibido por nivel de resistencia
+        resistance_bonus = 0.15 * (self.resistance_level - 1)
+        self.damage_taken_multiplier = max(0.4, 1.0 - resistance_bonus)
+
 
     def get_attack_hitbox(self):
         """Devuelve un Rect con el área de impacto del ataque (o None si no hay ataque activo)."""
@@ -310,9 +392,9 @@ class Player:
             self.hitbox_height,
         )
 
-        # Tamaño del área de ataque (ligeramente mayor que la hitbox)
-        atk_width = self.hitbox_width
-        atk_height = self.hitbox_height
+        range_mult = getattr(self, "attack_range_multiplier", 1.0)
+        atk_width = int(self.hitbox_width * range_mult)
+        atk_height = int(self.hitbox_height * range_mult) 
 
         if self.facing == 'up':
             return pygame.Rect(
@@ -345,6 +427,8 @@ class Player:
         return None
 
     def take_damage(self, amount: float):
-        self.health -= amount
+        # Aplicar resistencia (daño reducido)
+        factor = getattr(self, "damage_taken_multiplier", 1.0)
+        self.health -= amount * factor
         if self.health < 0:
             self.health = 0
