@@ -8,7 +8,9 @@ from core.game_state import GameState
 from core.settings import (
     SCREEN_HEIGTH, SCREEN_WIDTH, FPS, WINDOW_TITLE, COLOR_BG,
     ENEMY_INITIAL_SPAWN_INTERVAL, ENEMY_MIN_SPAWN_INTERVAL,
-    ENEMY_SPAWN_INTERVAL_STEP, ENEMY_MAX_ON_SCREEN_BASE, PLAYER_STAT_MAX_LEVEL, ENEMIES_PER_LEVEL, MAX_PLAYER_LEVEL
+    ENEMY_SPAWN_INTERVAL_STEP, ENEMY_MAX_ON_SCREEN_BASE, PLAYER_STAT_MAX_LEVEL, 
+    ENEMIES_PER_LEVEL, MAX_PLAYER_LEVEL, XP_PER_KILL, KILLS_PER_BANDAGE, MAX_BANDAGES,
+    PLAYER_XP_BASE
 )
 
 
@@ -91,9 +93,6 @@ class Game:
         self.score = 0
         self.run_time = 0.0      # 👈 tiempo de partida
 
-                # Resetear progresión del jugador
-        from core.settings import PLAYER_XP_BASE
-
         self.player.level = 1
         self.player.xp = 0
         self.player.xp_to_next = PLAYER_XP_BASE
@@ -102,6 +101,9 @@ class Game:
         self.player.strength_level = 1
         self.player.range_level = 1
         self.player.resistance_level = 1
+
+        self.player.bandages = 0
+        self.player.special_kill_counter = 0
 
         self.player.recalculate_stats()
         self.level = self.player.level
@@ -163,6 +165,13 @@ class Game:
 
                     elif event.key == pygame.K_SPACE:
                         self.player.toggle_weapon()
+                    
+                    elif event.key == pygame.K_h:
+                        self.player.use_bandage()
+                    elif event.key == pygame.K_q:
+                        self.use_special_frontal()
+                    elif event.key == pygame.K_e:
+                        self.use_special_spiral()
 
                 elif self.state == GameState.PAUSED:
                     if self.pending_level_up_choice:
@@ -257,14 +266,29 @@ class Game:
         self.enemies = [e for e in self.enemies if e.alive]
 
         # Actualizar estadísticas
-        from core.settings import XP_PER_KILL
-
         if killed_now > 0:
+            prev_kills = self.kills
+
             self.kills += killed_now
             self.score += killed_now * 10
 
+            # --- XP por enemigo ---
             total_xp = killed_now * XP_PER_KILL
             self.give_xp_to_player(total_xp)
+
+            # --- Sprint 4: contador especial ---
+            self.player.special_kill_counter += killed_now
+
+            # --- Sprint 4: vendas cada KILLS_PER_BANDAGE ---
+            prev_groups = prev_kills // KILLS_PER_BANDAGE
+            new_groups = self.kills // KILLS_PER_BANDAGE
+            gained = max(0, new_groups - prev_groups)
+
+            if gained > 0:
+                self.player.bandages = min(
+                    self.player.bandages + gained,
+                    MAX_BANDAGES
+                )
 
     def give_xp_to_player(self, amount: int):
         from core.settings import PLAYER_XP_GROWTH, MAX_PLAYER_LEVEL
@@ -571,6 +595,30 @@ class Game:
             (margin, margin + bar_height + 8 + txt_level.get_height() + txt_score.get_height())
         )
 
+        # Vendas
+        txt_bandages = font.render(f"Vendas (H): {self.player.bandages}", True, (180, 220, 255))
+        self.screen.blit(
+            txt_bandages,
+            (margin, margin + bar_height + 8 + txt_level.get_height() + txt_score.get_height() + txt_xp.get_height())
+        )
+
+        # Contador especial
+        from core.settings import SPECIAL_FRONTAL_KILLS, SPECIAL_SPIRAL_KILLS
+
+        special = self.player.special_kill_counter
+        ready = self.player.can_use_special_frontal() or self.player.can_use_special_spiral()
+
+        color = (255, 220, 120) if ready else (200, 200, 200)
+        txt_special = font.render(
+            f"Especial: {special}/{SPECIAL_FRONTAL_KILLS} (Q) | {special}/{SPECIAL_SPIRAL_KILLS} (E)",
+            True,
+            color
+        )
+        self.screen.blit(
+            txt_special,
+            (margin, SCREEN_HEIGTH - txt_special.get_height() - margin)
+        )
+
 
 
     def draw_menu(self):
@@ -634,7 +682,133 @@ class Game:
         self.screen.blit(text_level, (cx - text_level.get_width() // 2, cy + 20))
         self.screen.blit(text_hint, (cx - text_hint.get_width() // 2, cy + 70))
 
+    def _build_base_attack_rect(self):
+        """Rect básico frente al jugador si no está atacando justo ahora."""
+        import pygame
 
+        base_rect = pygame.Rect(
+            self.player.x + self.player.hitbox_offset_x,
+            self.player.y + self.player.hitbox_offset_y,
+            self.player.hitbox_width,
+            self.player.hitbox_height,
+        )
+
+        if self.player.facing == 'up':
+            return pygame.Rect(
+                base_rect.centerx - base_rect.width // 2,
+                base_rect.top - base_rect.height,
+                base_rect.width,
+                base_rect.height
+            )
+        elif self.player.facing == 'down':
+            return pygame.Rect(
+                base_rect.centerx - base_rect.width // 2,
+                base_rect.bottom,
+                base_rect.width,
+                base_rect.height
+            )
+        elif self.player.facing == 'left':
+            return pygame.Rect(
+                base_rect.left - base_rect.width,
+                base_rect.centery - base_rect.height // 2,
+                base_rect.width,
+                base_rect.height
+            )
+        else:  # right
+            return pygame.Rect(
+                base_rect.right,
+                base_rect.centery - base_rect.height // 2,
+                base_rect.width,
+                base_rect.height
+            )
+
+    
+    def use_special_frontal(self):
+        """Ataque frontal poderoso: gran rect en dirección de mirada."""
+        import pygame
+        from core.settings import SPECIAL_FRONTAL_DAMAGE, SPECIAL_FRONTAL_KILLS
+
+        if not self.player.can_use_special_frontal():
+            return
+
+        # Usar hitbox de ataque actual o construir base
+        base_rect = self.player.get_attack_hitbox()
+        if base_rect is None:
+            base_rect = self._build_base_attack_rect()
+
+        atk_rect = base_rect.copy()
+
+        # Alargar el rect en dirección de facing
+        if self.player.facing in ("up", "down"):
+            atk_rect.height *= 4
+            if self.player.facing == "up":
+                atk_rect.top -= (atk_rect.height - base_rect.height)
+        else:
+            atk_rect.width *= 4
+            if self.player.facing == "left":
+                atk_rect.left -= (atk_rect.width - base_rect.width)
+
+        killed_now = 0
+        for enemy in self.enemies:
+            if not enemy.alive:
+                continue
+            if atk_rect.colliderect(enemy.rect):
+                enemy.take_damage(SPECIAL_FRONTAL_DAMAGE)
+                if not enemy.alive:
+                    killed_now += 1
+
+        self.enemies = [e for e in self.enemies if e.alive]
+
+        # No usamos XP aquí para no desbalancear: reutilizamos handle... si quieres
+        if killed_now > 0:
+            # sumar kills/score/XP igual que un ataque normal
+            prev_kills = self.kills
+            self.kills += killed_now
+            self.score += killed_now * 20  # más puntos por especial
+
+            from core.settings import XP_PER_KILL
+            self.give_xp_to_player(killed_now * XP_PER_KILL)
+
+        # RF-02-07: reiniciar contador especial después de usar skill
+        self.player.reset_special_counter()
+
+    def use_special_spiral(self):
+        """Ataque en área alrededor del jugador."""
+        import pygame
+        from core.settings import SPECIAL_SPIRAL_DAMAGE, SPECIAL_SPIRAL_KILLS, SPECIAL_RADIUS, XP_PER_KILL
+
+        if not self.player.can_use_special_spiral():
+            return
+
+        center_x = self.player.x + self.player.width // 2
+        center_y = self.player.y + self.player.height // 2
+
+        area_rect = pygame.Rect(
+            center_x - SPECIAL_RADIUS,
+            center_y - SPECIAL_RADIUS,
+            SPECIAL_RADIUS * 2,
+            SPECIAL_RADIUS * 2
+        )
+
+        killed_now = 0
+        for enemy in self.enemies:
+            if not enemy.alive:
+                continue
+            if area_rect.colliderect(enemy.rect):
+                enemy.take_damage(SPECIAL_SPIRAL_DAMAGE)
+                if not enemy.alive:
+                    killed_now += 1
+
+        self.enemies = [e for e in self.enemies if e.alive]
+
+        if killed_now > 0:
+            self.kills += killed_now
+            self.score += killed_now * 25  # aún más puntos
+
+            self.give_xp_to_player(killed_now * XP_PER_KILL)
+
+        # Reinicio del contador de kills especial (RF-02-07)
+        self.player.reset_special_counter()
 
 
 

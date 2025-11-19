@@ -43,3 +43,16 @@ PLAYER_XP_GROWTH = 1.15       # +15% XP necesaria por nivel
 MAX_PLAYER_LEVEL = 13         # nivel global máximo (1 + 12 mejoras)
 
 PLAYER_STAT_MAX_LEVEL = 4
+
+# --- Curación e inventario ---
+BANDAGE_HEAL_AMOUNT = 25      # HP curados por venda
+MAX_BANDAGES = 5              # tope de vendas que puedes acumular
+KILLS_PER_BANDAGE = 6         # cada cuántas kills ganas 1 venda
+
+# --- Habilidades especiales ---
+SPECIAL_FRONTAL_KILLS = 12    # kills necesarias para Q
+SPECIAL_SPIRAL_KILLS = 20     # kills necesarias para E
+
+SPECIAL_FRONTAL_DAMAGE = 999  # daño muy alto en línea (ajustable)
+SPECIAL_SPIRAL_DAMAGE = 999   # daño muy alto en área (ajustable)
+SPECIAL_RADIUS = 200          # radio del ataque en área (E)

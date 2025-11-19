@@ -1,7 +1,7 @@
 import os
 import pygame
 from graphics.sprite_sheet import SpriteSheet
-from core.settings import MAP_WIDTH_PX, MAP_HEIGHT_PX, PLAYER_MAX_HEALTH
+from core.settings import MAP_WIDTH_PX, MAP_HEIGHT_PX, PLAYER_MAX_HEALTH, BANDAGE_HEAL_AMOUNT, MAX_BANDAGES
 
 
 
@@ -10,6 +10,12 @@ class Player:
         """Player with configurable sprite sheet layout."""
         self.max_health = PLAYER_MAX_HEALTH
         self.health = self.max_health
+
+        # --- Sprint 4: inventario simple de vendas ---
+        self.bandages = 0
+
+        # --- Sprint 4: contador de bajas para habilidades especiales ---
+        self.special_kill_counter = 0
 
         self.x = x
         self.y = y
@@ -432,3 +438,25 @@ class Player:
         self.health -= amount * factor
         if self.health < 0:
             self.health = 0
+
+    def use_bandage(self):
+        """Usa una venda para curarse si es posible."""
+        if self.bandages <= 0:
+            return  # no hay vendas
+
+        if self.health >= self.max_health:
+            return  # ya está full
+
+        self.health = min(self.max_health, self.health + BANDAGE_HEAL_AMOUNT)
+        self.bandages -= 1
+
+    def reset_special_counter(self):
+        self.special_kill_counter = 0
+
+    def can_use_special_frontal(self):
+        from core.settings import SPECIAL_FRONTAL_KILLS
+        return self.special_kill_counter >= SPECIAL_FRONTAL_KILLS
+
+    def can_use_special_spiral(self):
+        from core.settings import SPECIAL_SPIRAL_KILLS
+        return self.special_kill_counter >= SPECIAL_SPIRAL_KILLS
