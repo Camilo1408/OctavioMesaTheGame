@@ -10,7 +10,9 @@ from core.settings import (
     ENEMY_INITIAL_SPAWN_INTERVAL, ENEMY_MIN_SPAWN_INTERVAL,
     ENEMY_SPAWN_INTERVAL_STEP, ENEMY_MAX_ON_SCREEN_BASE, PLAYER_STAT_MAX_LEVEL, 
     ENEMIES_PER_LEVEL, MAX_PLAYER_LEVEL, XP_PER_KILL, KILLS_PER_BANDAGE, MAX_BANDAGES,
-    PLAYER_XP_BASE
+    PLAYER_XP_BASE,
+    DEBUG_DRAW_HITBOXES,
+    DEBUG_DRAW_ATTACK_FIELDS,
 )
 
 
@@ -232,20 +234,12 @@ class Game:
 
 
     def handle_enemy_collisions(self):
-        import pygame
-        player_rect = pygame.Rect(
-            self.player.x + self.player.hitbox_offset_x,
-            self.player.y + self.player.hitbox_offset_y,
-            self.player.hitbox_width,
-            self.player.hitbox_height,
-        )
-
-        for enemy in self.enemies:
-            if not enemy.alive:
-                continue
-            if player_rect.colliderect(enemy.rect):
-                # daño por contacto muy simple
-                self.player.take_damage(enemy.damage * (1 / FPS))
+        """
+        Por ahora no hacemos daño por contacto.
+        El daño de los enemigos se calcula en Enemy.update() usando su campo de ataque.
+        Aquí podrías manejar solo empujones/colisiones físicas si lo quieres más adelante.
+        """
+        return
 
     def handle_player_attack_collisions(self):
         atk_rect = self.player.get_attack_hitbox()
@@ -257,18 +251,24 @@ class Game:
         for enemy in self.enemies:
             if not enemy.alive:
                 continue
+
             if atk_rect.colliderect(enemy.rect):
+                # Vida antes del golpe
+                prev_health = enemy.health
+                was_alive = enemy.alive
+
                 enemy.take_damage(self.player.attack_damage)
-                if not enemy.alive:
+
+                # Registrar la kill cuando la vida pasa de >0 a <=0
+                if was_alive and prev_health > 0 and enemy.health <= 0:
                     killed_now += 1
 
-        # Quitar los muertos de la lista
+        # Quitar de la lista SOLO a los que ya terminaron animación de muerte
         self.enemies = [e for e in self.enemies if e.alive]
 
-        # Actualizar estadísticas
+        # --- Si hubo kills, actualizamos todo ---
         if killed_now > 0:
             prev_kills = self.kills
-
             self.kills += killed_now
             self.score += killed_now * 10
 
@@ -276,10 +276,10 @@ class Game:
             total_xp = killed_now * XP_PER_KILL
             self.give_xp_to_player(total_xp)
 
-            # --- Sprint 4: contador especial ---
+            # --- Sprint 4: Contador especial ---
             self.player.special_kill_counter += killed_now
 
-            # --- Sprint 4: vendas cada KILLS_PER_BANDAGE ---
+            # --- Sprint 4: Vendas por grupos ---
             prev_groups = prev_kills // KILLS_PER_BANDAGE
             new_groups = self.kills // KILLS_PER_BANDAGE
             gained = max(0, new_groups - prev_groups)
@@ -289,6 +289,7 @@ class Game:
                     self.player.bandages + gained,
                     MAX_BANDAGES
                 )
+
 
     def give_xp_to_player(self, amount: int):
         from core.settings import PLAYER_XP_GROWTH, MAX_PLAYER_LEVEL
@@ -512,36 +513,124 @@ class Game:
 
 
     def draw_game(self):
+        import pygame
+
         camera_offset = self.camera.get_offset()
 
-        # Mapa
+        # 1) Mapa
         self.tile_map.draw(self.screen, camera_offset)
 
-        # Enemigos
+        # 2) Construir lista de entidades ordenadas por profundidad (rect.bottom)
+        drawables = []
+
+        # --- Enemigos ---
         for enemy in self.enemies:
-            enemy.draw(self.screen, camera_offset)
+            if not enemy.alive:
+                continue
 
-        # Jugador
-        player_pos = (
-            self.player.x - camera_offset[0],
-            self.player.y - camera_offset[1]
-        )
-        self.screen.blit(self.player.image, player_pos)
+            depth_rect = enemy.rect  # rect en coordenadas del mundo
+            drawables.append(("enemy", depth_rect.bottom, enemy))
 
-        # Hitbox debug
-        pygame.draw.rect(
-            self.screen,
-            (255, 0, 0),
-            pygame.Rect(
-                player_pos[0] + self.player.hitbox_offset_x,
-                player_pos[1] + self.player.hitbox_offset_y,
+        # --- Jugador ---
+        # Usamos hitbox reducida si es posible para la profundidad
+        if hasattr(self.player, "hitbox_width"):
+            player_rect_world = pygame.Rect(
+                self.player.x + self.player.hitbox_offset_x,
+                self.player.y + self.player.hitbox_offset_y,
                 self.player.hitbox_width,
-                self.player.hitbox_height
-            ),
-            2
-        )
+                self.player.hitbox_height,
+            )
+        elif hasattr(self.player, "rect"):
+            player_rect_world = self.player.rect
+        else:
+            player_rect_world = pygame.Rect(
+                self.player.x,
+                self.player.y,
+                self.player.width,
+                self.player.height,
+            )
 
-        # UI
+        drawables.append(("player", player_rect_world.bottom, self.player))
+
+        # Ordenar de más arriba (menor bottom) a más abajo (mayor bottom)
+        drawables.sort(key=lambda item: item[1])
+
+        # 3) Pintar entidades en orden
+        for kind, _, obj in drawables:
+            if kind == "enemy":
+                # Sprite
+                obj.draw(self.screen, camera_offset)
+
+                # Hitbox del enemigo (debug)
+                if DEBUG_DRAW_HITBOXES:
+                    enemy_rect = obj.rect
+                    debug_rect = pygame.Rect(
+                        enemy_rect.x - camera_offset[0],
+                        enemy_rect.y - camera_offset[1],
+                        enemy_rect.width,
+                        enemy_rect.height,
+                    )
+                    pygame.draw.rect(self.screen, (0, 255, 0), debug_rect, 1)
+
+                # Campo de ataque del enemigo (debug)
+                if DEBUG_DRAW_ATTACK_FIELDS and hasattr(obj, "get_attack_hitbox"):
+                    atk_rect = obj.get_attack_hitbox()
+                    if atk_rect is not None:
+                        debug_atk = pygame.Rect(
+                            atk_rect.x - camera_offset[0],
+                            atk_rect.y - camera_offset[1],
+                            atk_rect.width,
+                            atk_rect.height,
+                        )
+                        # Magenta
+                        pygame.draw.rect(self.screen, (255, 0, 255), debug_atk, 2)
+
+            elif kind == "player":
+                # Sprite del jugador
+                player_pos = (
+                    obj.x - camera_offset[0],
+                    obj.y - camera_offset[1],
+                )
+                self.screen.blit(obj.image, player_pos)
+
+                # Hitbox del jugador (debug)
+                if DEBUG_DRAW_HITBOXES:
+                    pygame.draw.rect(
+                        self.screen,
+                        (255, 0, 0),
+                        pygame.Rect(
+                            player_pos[0] + obj.hitbox_offset_x,
+                            player_pos[1] + obj.hitbox_offset_y,
+                            obj.hitbox_width,
+                            obj.hitbox_height,
+                        ),
+                        1,
+                    )
+
+                # Campo de ataque del jugador (debug)
+                if DEBUG_DRAW_ATTACK_FIELDS and hasattr(obj, "get_attack_hitbox"):
+                    atk_rect = obj.get_attack_hitbox()
+                    if atk_rect is not None:
+                        debug_atk = pygame.Rect(
+                            atk_rect.x - camera_offset[0],
+                            atk_rect.y - camera_offset[1],
+                            atk_rect.width,
+                            atk_rect.height,
+                        )
+                        # Amarillo
+                        pygame.draw.rect(self.screen, (255, 255, 0), debug_atk, 2)
+                
+                # 🔥 Swing del ataque del jugador (si está atacando)
+                swing_data = obj.get_attack_swing_sprite() if hasattr(obj, "get_attack_swing_sprite") else None
+                if swing_data is not None:
+                    swing_img, swing_x, swing_y = swing_data
+                    swing_pos = (
+                        swing_x - camera_offset[0],
+                        swing_y - camera_offset[1],
+                    )
+                    self.screen.blit(swing_img, swing_pos)
+
+        # 4) UI siempre encima
         self.draw_ui()
 
     def draw_ui(self):

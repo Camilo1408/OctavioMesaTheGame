@@ -78,7 +78,7 @@ class Player:
 
         # Sprite sheet setup
         if sprite_path is None:
-            sprite_path = os.path.join('..','assets', 'sprites', 'Octavio Mesa.png')
+            sprite_path = os.path.join('assets', 'sprites', 'Octavio Mesa.png')
         sprite_path = sprite_path.replace('\\', '/')
         self.sprite_size = sprite_size
         self.unarmed_row = unarmed_row
@@ -110,6 +110,22 @@ class Player:
 
         # Load all animations
         self.load_animations()
+
+        # --- Efecto visual del ataque (attack_swing) ---
+        swing_path = os.path.join('assets', 'sprites', 'attack_swing.png')
+        swing_path = swing_path.replace('\\', '/')
+
+        self.attack_swing_sheet = None
+        self.attack_swing_frames = {}
+
+        if os.path.exists(swing_path):
+            try:
+                self.attack_swing_sheet = SpriteSheet(swing_path)
+                self.attack_swing_frames = self._load_attack_swing_frames()
+            except Exception as e:
+                print(f"[WARN] No se pudo cargar attack_swing.png: {e}")
+        else:
+            print("[WARN] No se encontró assets/sprites/attack_swing.png")
 
         # Animation state
         self.current_animation = 'idle_down'
@@ -176,6 +192,42 @@ class Player:
         for direction, row in attack_rows_armed.items():
             self.animations['armed'][f'attack_{direction}'] = load_from_row(
                 row, num_frames=6, is_attack=True, direction=direction, armed=True)
+
+    def _load_attack_swing_frames(self):
+        """
+        Carga el sprite sheet de ataque (attack_swing.png) en un diccionario:
+        {
+          'down':  [frame0, frame1, frame2, frame3],
+          'up':    [...],
+          'left':  [...],
+          'right': [...]
+        }
+        """
+        if self.attack_swing_sheet is None:
+            return {}
+
+        frames = {'down': [], 'up': [], 'left': [], 'right': []}
+
+        sheet = self.attack_swing_sheet.sprite_sheet
+        sheet_w, sheet_h = sheet.get_width(), sheet.get_height()
+
+        # Tamaño de cada celda en el sheet (4 columnas x 4 filas)
+        cols = 6
+        rows = 4
+        cell_w = sheet_w // cols   # 384 / 6 = 64
+        cell_h = sheet_h // rows   # 256 / 4 = 64
+
+        # Orden de filas del PNG: 0=down, 1=up, 2=left, 3=right
+        dir_order = ['down', 'up', 'left', 'right']
+
+        for row, direction in enumerate(dir_order):
+            for col in range(cols):
+                x = col * cell_w
+                y = row * cell_h
+                frame = self.attack_swing_sheet.get_sprite(x, y, cell_w, cell_h)
+                frames[direction].append(frame)
+
+        return frames
 
     def handle_input(self):
         keys = pygame.key.get_pressed()
@@ -431,6 +483,75 @@ class Player:
                 atk_height,
             )
         return None
+    
+    def get_attack_swing_sprite(self):
+        """
+        Si el jugador está atacando, devuelve (surface, world_x, world_y)
+        del sprite del swing actual, ESCALADO al tamaño del área de ataque.
+        Si no hay ataque o no se pudo cargar, devuelve None.
+        """
+        if not self.is_attacking:
+            return None
+
+        if not getattr(self, "attack_swing_frames", None):
+            return None
+
+        # Usamos el área REAL de ataque (ya incluye el multiplicador de rango)
+        atk_rect = self.get_attack_hitbox()
+        if atk_rect is None:
+            return None
+
+        # Elegimos los frames del swing según la dirección
+        frames = self.attack_swing_frames.get(self.facing, [])
+        if not frames:
+            return None
+
+        # Usar el mismo índice de frame que la animación de ataque
+        index = min(self.animation_frame, len(frames) - 1)
+        base_image = frames[index]
+
+        base_w, base_h = base_image.get_width(), base_image.get_height()
+
+        # Escalamos manteniendo proporción tomando la altura del área de ataque
+        # (puedes usar el ancho si te gusta más cómo se ve)
+        scale_factor = atk_rect.height / base_h
+
+        new_w = max(1, int(base_w * scale_factor))
+        new_h = max(1, int(base_h * scale_factor))
+
+        # Escalar imagen (no modificamos el frame original)
+        scaled_image = pygame.transform.smoothscale(base_image, (new_w, new_h))
+
+        # Centramos el swing en el centro del área de ataque
+        world_x = atk_rect.centerx - new_w // 2
+        world_y = atk_rect.centery - new_h // 2
+
+        # Rectángulo base: hitbox del cuerpo del jugador (no el área de ataque)
+        base_rect = pygame.Rect(
+            self.x + self.hitbox_offset_x,
+            self.y + self.hitbox_offset_y,
+            self.hitbox_width,
+            self.hitbox_height,
+        )
+
+        fw, fh = new_w, new_h
+
+        # Offsets por dirección para que se vea centrado alrededor del jugador
+        if self.facing == "down":
+            world_x = base_rect.centerx - fw // 2
+            world_y = base_rect.bottom - int(fh * 0.4)
+        elif self.facing == "up":
+            world_x = base_rect.centerx - fw // 2
+            world_y = base_rect.top - int(fh * 0.6)
+        elif self.facing == "left":
+            world_x = base_rect.left - int(fw * 0.7)
+            world_y = base_rect.centery - fh // 2
+        else:  # "right"
+            world_x = base_rect.right - int(fw * 0.3)
+            world_y = base_rect.centery - fh // 2
+
+        return scaled_image, world_x, world_y
+
 
     def take_damage(self, amount: float):
         # Aplicar resistencia (daño reducido)

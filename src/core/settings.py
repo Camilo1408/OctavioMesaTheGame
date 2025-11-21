@@ -16,6 +16,9 @@ MAP_HEIGHT_PX = TILE_SIZE * MAP_HEIGHT_TILES
 PLAYER_MAX_HEALTH = 100
 ENEMY_BASE_HEALTH = 30
 
+DEBUG_DRAW_HITBOXES = True          # Rectángulos de hitbox (cuerpo)
+DEBUG_DRAW_ATTACK_FIELDS = True     # Rectángulos de campo de ataque
+
 # --- Gameplay ---
 ENEMY_INITIAL_SPAWN_INTERVAL = 2.5  # segundos entre spawns al principio
 ENEMY_MIN_SPAWN_INTERVAL = 0.8      # mínimo intervalo al aumentar dificultad
@@ -28,6 +31,44 @@ ENEMY_HEALTH_GROWTH = 1.10   # +10% vida por nivel
 ENEMY_DAMAGE_GROWTH = 1.10   # +10% daño por nivel
 
 ENEMY_BASE_DAMAGE = 6.0  # daño base por “golpe/contacto”
+
+ENEMY_ATTACK_COOLDOWN = 0.9   # segundos entre ataques de un mismo enemigo
+ENEMY_ATTACK_RANGE = 45       # distancia en píxeles para poder atacar
+ENEMY_FRAME_SIZE = 64         # tamaño (ancho/alto) de cada frame del orco (ajusta si no es 64)
+
+# --- Enemigos: sprites ---
+ENEMY_SPRITES = {
+    "orc1": {
+        "walk":        "assets/sprites/Enemys/Orc1/orc1_walk_with_shadow.png",
+        "idle":        "assets/sprites/Enemys/Orc1/orc1_idle_with_shadow.png",
+        "run":         "assets/sprites/Enemys/Orc1/orc1_run_with_shadow.png",
+        "attack":      "assets/sprites/Enemys/Orc1/orc1_attack_with_shadow.png",
+        "walk_attack": "assets/sprites/Enemys/Orc1/orc1_walk_attack_front_with_shadow.png",
+        "run_attack":  "assets/sprites/Enemys/Orc1/orc1_run_attack_front_with_shadow.png",
+        "hurt":        "assets/sprites/Enemys/Orc1/orc1_hurt_with_shadow.png",
+        "death":       "assets/sprites/Enemys/Orc1/orc1_death_with_shadow.png",
+    },
+    "orc2": {
+        "idle":        "assets/sprites/Enemys/Orc2/orc2_idle_with_shadow.png",
+        "walk":        "assets/sprites/Enemys/Orc2/orc2_walk_with_shadow.png",
+        "run":         "assets/sprites/Enemys/Orc2/orc2_run_with_shadow.png",
+        "attack":      "assets/sprites/Enemys/Orc2/orc2_attack_with_shadow.png",
+        "walk_attack": "assets/sprites/Enemys/Orc2/orc2_walk_attack_front_with_shadow.png",
+        "run_attack":  "assets/sprites/Enemys/Orc2/orc2_run_attack_front_with_shadow.png",
+        "hurt":        "assets/sprites/Enemys/Orc2/orc2_hurt_with_shadow.png",
+        "death":       "assets/sprites/Enemys/Orc2/orc2_death_with_shadow.png",
+    },
+    "orc3": {
+        "idle":        "assets/sprites/Enemys/Orc3/orc3_idle_with_shadow.png",
+        "walk":        "assets/sprites/Enemys/Orc3/orc3_walk_with_shadow.png",
+        "run":         "assets/sprites/Enemys/Orc3/orc3_run_with_shadow.png",
+        "attack":      "assets/sprites/Enemys/Orc3/orc3_attack_with_shadow.png",
+        "walk_attack": "assets/sprites/Enemys/Orc3/orc3_walk_attack_front_with_shadow.png",
+        "run_attack":  "assets/sprites/Enemys/Orc3/orc3_run_attack_front_with_shadow.png",
+        "hurt":        "assets/sprites/Enemys/Orc3/orc3_hurt_with_shadow.png",
+        "death":       "assets/sprites/Enemys/Orc3/orc3_death_with_shadow.png",
+    },
+}
 
 # --- Armas jugador ---
 FIST_BASE_DAMAGE = 15

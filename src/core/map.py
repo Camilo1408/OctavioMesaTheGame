@@ -24,7 +24,7 @@ class TileMap:
     # 🔹 Cargar sprites y ajustar tamaños
     # ---------------------------------------------------------------------
     def load_images(self):
-        base_path = os.path.join("..","assets", "sprites")
+        base_path = os.path.join("assets", "sprites")
 
         def load_folder(folder_path, max_size=None):
             images = []
