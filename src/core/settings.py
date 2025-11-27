@@ -14,7 +14,7 @@ MAP_WIDTH_PX = TILE_SIZE * MAP_WIDTH_TILES
 MAP_HEIGHT_PX = TILE_SIZE * MAP_HEIGHT_TILES
 
 PLAYER_MAX_HEALTH = 100
-ENEMY_BASE_HEALTH = 30
+ENEMY_BASE_HEALTH = 45
 
 DEBUG_DRAW_HITBOXES = True          # Rectángulos de hitbox (cuerpo)
 DEBUG_DRAW_ATTACK_FIELDS = True     # Rectángulos de campo de ataque
@@ -27,7 +27,7 @@ ENEMY_SPAWN_INTERVAL_STEP = 0.15    # cuánto se reduce el intervalo por nivel
 ENEMY_MAX_ON_SCREEN_BASE = 6     # como ya tenías
 ENEMIES_PER_LEVEL = 5            # +5 enemigos máx. por nivel
 
-ENEMY_HEALTH_GROWTH = 1.10   # +10% vida por nivel
+ENEMY_HEALTH_GROWTH = 1.12   # +12% vida por nivel
 ENEMY_DAMAGE_GROWTH = 1.10   # +10% daño por nivel
 
 ENEMY_BASE_DAMAGE = 6.0  # daño base por “golpe/contacto”
@@ -71,8 +71,8 @@ ENEMY_SPRITES = {
 }
 
 # --- Armas jugador ---
-FIST_BASE_DAMAGE = 15
-MACHETE_BASE_DAMAGE = 30
+FIST_BASE_DAMAGE = 10
+MACHETE_BASE_DAMAGE = 60
 
 FIST_BASE_RANGE = 1.0    # multiplicador de rango
 MACHETE_BASE_RANGE = 1.5

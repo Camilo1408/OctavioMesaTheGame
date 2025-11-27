@@ -8,12 +8,16 @@ from core.game_state import GameState
 from core.settings import (
     SCREEN_HEIGTH, SCREEN_WIDTH, FPS, WINDOW_TITLE, COLOR_BG,
     ENEMY_INITIAL_SPAWN_INTERVAL, ENEMY_MIN_SPAWN_INTERVAL,
-    ENEMY_SPAWN_INTERVAL_STEP, ENEMY_MAX_ON_SCREEN_BASE, PLAYER_STAT_MAX_LEVEL, 
+    ENEMY_SPAWN_INTERVAL_STEP, ENEMY_MAX_ON_SCREEN_BASE, 
     ENEMIES_PER_LEVEL, MAX_PLAYER_LEVEL, XP_PER_KILL, KILLS_PER_BANDAGE, MAX_BANDAGES,
     PLAYER_XP_BASE,
     DEBUG_DRAW_HITBOXES,
-    DEBUG_DRAW_ATTACK_FIELDS,
+    DEBUG_DRAW_ATTACK_FIELDS, ENEMY_BASE_HEALTH, SPECIAL_FRONTAL_DAMAGE,
+    SPECIAL_SPIRAL_DAMAGE, SPECIAL_RADIUS, XP_PER_KILL, SPECIAL_FRONTAL_KILLS,SPECIAL_SPIRAL_KILLS
 )
+import math, os, random
+from entities.boss_diablo import BossDiablo
+
 
 
 class Game:
@@ -59,13 +63,58 @@ class Game:
         
         self.level = self.player.level  # sincronizar nivel del juego con nivel del jugador
 
+        # Efectos visuales de habilidades especiales (Q/E)
+        # Cada efecto será un dict con:
+        # {
+        #   "type": "frontal" | "spiral",
+        #   "time": float,
+        #   "duration": float,
+        #   "direction": str,   # 'up','down','left','right' (para frontal)
+        #   "center": (x, y),   # posición del jugador cuando casteó
+        # }
+        self.special_effects = []
+
+        # DEBUG: comprobar balance de daño en nivel 1
+
+        print("=== DEBUG BALANCE NIVEL 1 ===")
+        print(f"Vida enemigo base: {ENEMY_BASE_HEALTH}")
+        print(f"Daño puños (sin fuerza extra): {self.player.base_attack_damage_unarmed}")
+        print(f"Golpes necesarios (puños): {ENEMY_BASE_HEALTH / self.player.base_attack_damage_unarmed:.2f}")
+        print(f"Daño machete (sin fuerza extra): {self.player.base_attack_damage_armed}")
+        print(f"Golpes necesarios (machete): {ENEMY_BASE_HEALTH / self.player.base_attack_damage_armed:.2f}")
+        print("================================")
+
         self.camera = Camera(SCREEN_WIDTH, SCREEN_HEIGTH)
         self.tile_map = TileMap(tile_size=32, width=50, height=50)
         self.tile_map.build_map()
         # ---- Enemigos ----
         self.enemies = []
         # Enemigos se crean cuando realmente empieza la partida
-  # sincronizar nivel del juego con nivel del jugador
+        # sincronizar nivel del juego con nivel del jugador
+
+        self.flash_timer = 0.0
+        self.shake_timer = 0.0
+        self.shake_strength = 0
+
+                    # === CARGA DE SONIDOS ===
+        sound_path = os.path.join(os.path.dirname(__file__), "..", "assets", "sounds")
+
+        self.snd_slash_q = pygame.mixer.Sound(os.path.join(sound_path, "Slash.mp3"))
+        self.snd_slash_d = pygame.mixer.Sound(os.path.join(sound_path, "SlashD.mp3"))
+        self.snd_explosion_e = pygame.mixer.Sound(os.path.join(sound_path, "Explosion.mp3"))
+        self.snd_whoosh = pygame.mixer.Sound(os.path.join(sound_path, "Woosh.mp3"))
+
+        # Ajustar volumen si deseas
+        self.snd_slash_q.set_volume(0.7)
+        self.snd_slash_d.set_volume(0.7)
+        self.snd_explosion_e.set_volume(0.8)
+        self.snd_whoosh.set_volume(0.6)
+
+        # --- Estado del jefe ---
+        self.boss_active = False      # Hay combate contra el Diablo
+        self.boss_spawned = False     # Ya se creó al menos una vez
+
+
 
 
     def save_current_run_summary(self):
@@ -113,6 +162,36 @@ class Game:
 
         self.max_enemies_on_screen = ENEMY_MAX_ON_SCREEN_BASE
         self.spawn_interval = ENEMY_INITIAL_SPAWN_INTERVAL
+
+        # --- Reset completo de enemigos y spawns ---
+        # eliminar TODOS los enemigos de la partida anterior
+        self.enemies = []
+        # reiniciar el temporizador de spawn
+        self.spawn_timer = 0.0
+
+        # si estás usando un registro de enemigos ya contados (por si acaso)
+        if hasattr(self, "killed_enemies_registered"):
+            self.killed_enemies_registered.clear()
+
+            # --- Reset de estados especiales del jugador (muerte / daño / animaciones) ---
+        if hasattr(self.player, "is_dying"):
+            self.player.is_dying = False
+        if hasattr(self.player, "death_animation_finished"):
+            self.player.death_animation_finished = False
+        if hasattr(self.player, "is_hurt"):
+            self.player.is_hurt = False
+
+        # reset básico de animación del player
+        self.player.animation_frame = 0
+        self.player.animation_timer = 0.0
+        # lo dejamos mirando hacia abajo en idle (ajusta si usas otro nombre)
+        if hasattr(self.player, "direction"):
+            self.player.direction = "down"
+        if hasattr(self.player, "current_animation"):
+            # según cómo nombres tus animaciones de idle, ajusta esta cadena
+            self.player.current_animation = "idle_down"
+
+
 
 
     def start_game(self):
@@ -228,9 +307,24 @@ class Game:
         self.handle_player_attack_collisions()
         self.update_enemy_spawning(dt)
 
-        if self.player.health <= 0:
-            self.state = GameState.GAME_OVER      # solo cambio de estado
+        # Actualizar efectos visuales de habilidades especiales
+        self.update_special_effects(dt)
+
+        # Cambiar a GAME_OVER solo cuando termine la animación de muerte
+        if self.player.health <= 0 and getattr(self.player, "death_animation_finished", False):
+            self.state = GameState.GAME_OVER
             # NO LLAMAR reset_game() aquí
+
+        if self.flash_timer > 0:
+            self.flash_timer -= dt
+
+        # --- actualizar screen shake ---
+        if self.shake_timer > 0:
+            self.shake_timer -= dt
+            if self.shake_timer < 0:
+                self.shake_timer = 0
+
+
 
 
     def handle_enemy_collisions(self):
@@ -242,9 +336,14 @@ class Game:
         return
 
     def handle_player_attack_collisions(self):
+
         atk_rect = self.player.get_attack_hitbox()
         if atk_rect is None:
             return
+
+        # Seguridad: si por alguna razón aún no existe el set, lo creamos
+        if not hasattr(self.player, "hit_enemies_this_swing"):
+            self.player.hit_enemies_this_swing = set()
 
         killed_now = 0
 
@@ -252,7 +351,14 @@ class Game:
             if not enemy.alive:
                 continue
 
+            # Si este enemigo ya fue golpeado en este swing, lo ignoramos
+            if enemy in self.player.hit_enemies_this_swing:
+                continue
+
             if atk_rect.colliderect(enemy.rect):
+                # Marcamos que ya fue golpeado en este ataque
+                self.player.hit_enemies_this_swing.add(enemy)
+
                 # Vida antes del golpe
                 prev_health = enemy.health
                 was_alive = enemy.alive
@@ -272,14 +378,14 @@ class Game:
             self.kills += killed_now
             self.score += killed_now * 10
 
-            # --- XP por enemigo ---
+            # XP por enemigo
             total_xp = killed_now * XP_PER_KILL
             self.give_xp_to_player(total_xp)
 
-            # --- Sprint 4: Contador especial ---
+            # Contador especial
             self.player.special_kill_counter += killed_now
 
-            # --- Sprint 4: Vendas por grupos ---
+            # Vendas por grupos
             prev_groups = prev_kills // KILLS_PER_BANDAGE
             new_groups = self.kills // KILLS_PER_BANDAGE
             gained = max(0, new_groups - prev_groups)
@@ -289,6 +395,7 @@ class Game:
                     self.player.bandages + gained,
                     MAX_BANDAGES
                 )
+
 
 
     def give_xp_to_player(self, amount: int):
@@ -324,8 +431,11 @@ class Game:
     def update_enemy_spawning(self, dt: float):
         """Spawnea enemigos con el tiempo, limitado por max_enemies_on_screen."""
         from core.settings import MAP_WIDTH_PX, MAP_HEIGHT_PX, TILE_SIZE
-        import random
 
+        # Si estamos en combate con el jefe, NO spawneamos más orcos
+        if self.boss_active:
+            return
+        
         # Si ya hay muchos enemigos, no spawnear más
         alive_count = sum(1 for e in self.enemies if e.alive)
         if alive_count >= self.max_enemies_on_screen:
@@ -362,6 +472,8 @@ class Game:
 
 
 
+
+
     def level_up(self):
         if self.player.level >= MAX_PLAYER_LEVEL:
             return
@@ -369,6 +481,10 @@ class Game:
         # Subir nivel de jugador y sincronizar
         self.player.level += 1
         self.level = self.player.level
+
+        # Si llegamos al nivel del jefe, lo spawneamos
+        if self.level == 6 and not self.boss_spawned:
+            self.spawn_boss_diablo()
 
         # Spawn más rápido (como ya tenías)
         self.spawn_interval = max(
@@ -513,7 +629,6 @@ class Game:
 
 
     def draw_game(self):
-        import pygame
 
         camera_offset = self.camera.get_offset()
 
@@ -523,6 +638,7 @@ class Game:
         # 2) Construir lista de entidades ordenadas por profundidad (rect.bottom)
         drawables = []
 
+        special_ready = self.player.can_use_special_frontal() or self.player.can_use_special_spiral()
         # --- Enemigos ---
         for enemy in self.enemies:
             if not enemy.alive:
@@ -586,12 +702,51 @@ class Game:
                         pygame.draw.rect(self.screen, (255, 0, 255), debug_atk, 2)
 
             elif kind == "player":
-                # Sprite del jugador
+                # Posición del jugador en pantalla
                 player_pos = (
                     obj.x - camera_offset[0],
                     obj.y - camera_offset[1],
                 )
-                self.screen.blit(obj.image, player_pos)
+
+                # --- Hurt flash (parpadeo blanco cuando recibe daño) ---
+                image_to_draw = obj.image
+                if getattr(obj, "is_hurt", False):
+                    t = pygame.time.get_ticks() // 40
+                    if t % 2 == 0:
+                        image_to_draw = obj.image.copy()
+                        image_to_draw.fill((255, 255, 255), special_flags=pygame.BLEND_RGB_ADD)
+
+                # Dibujar sprite del jugador
+                self.screen.blit(image_to_draw, player_pos)
+
+                # --- Aura de especial listo ---
+                if special_ready:
+                    # centro cerca de los pies del jugador
+                    center_x = player_pos[0] + obj.width // 2
+                    center_y = player_pos[1] + obj.height
+
+                    # radio del círculo
+                    radius = int(obj.width * 0.7)
+                    aura_surface = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+
+                    # pequeño pulso con sin() para que respire
+                    t = pygame.time.get_ticks() / 1000.0
+                    alpha = 120 + int(80 * math.sin(t * 4))  # oscila entre ~40 y ~200
+
+                    pygame.draw.circle(
+                        aura_surface,
+                        (255, 255, 150, alpha),
+                        (radius, radius),
+                        radius,
+                        3
+                    )
+
+                    # dibujamos la aura centrada en los pies
+                    self.screen.blit(
+                        aura_surface,
+                        (center_x - radius, center_y - radius)
+                    )
+
 
                 # Hitbox del jugador (debug)
                 if DEBUG_DRAW_HITBOXES:
@@ -633,8 +788,38 @@ class Game:
         # 4) UI siempre encima
         self.draw_ui()
 
+        # 3.5) Efectos visuales de habilidades especiales por encima de entidades
+        self.draw_special_effects(camera_offset)
+
+        if self.flash_timer > 0:
+            alpha = int(255 * (self.flash_timer / 0.15))
+            flash_surface = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGTH))
+            flash_surface.set_alpha(alpha)
+            flash_surface.fill((255, 255, 255))
+            self.screen.blit(flash_surface, (0, 0))
+
+            # offset base de cámara (sin temblor)
+            camera_offset = self.camera.get_offset()
+
+            shake_x = 0
+            shake_y = 0
+            if self.shake_timer > 0:
+                shake_x = random.randint(-self.shake_strength, self.shake_strength)
+                shake_y = random.randint(-self.shake_strength, self.shake_strength)
+
+            # offset final con temblor
+            camera_offset = (
+                camera_offset[0] + shake_x,
+                camera_offset[1] + shake_y,
+            )
+
+            # 1) Mapa
+            self.tile_map.draw(self.screen, camera_offset)
+
+
+
+
     def draw_ui(self):
-        import pygame
 
         bar_width = 200
         bar_height = 20
@@ -707,6 +892,19 @@ class Game:
             txt_special,
             (margin, SCREEN_HEIGTH - txt_special.get_height() - margin)
         )
+
+        # Indicador extra cuando el especial está listo
+        if ready:
+            # pequeño parpadeo usando el tiempo global
+            t = pygame.time.get_ticks() // 150  # cambia cada 150 ms
+            if t % 2 == 0:
+                ready_text = "¡ESPECIAL LISTA!"
+                txt_ready = font.render(ready_text, True, (255, 255, 150))
+                # lo dibujamos justo encima de la línea de especial
+                self.screen.blit(
+                    txt_ready,
+                    (margin, SCREEN_HEIGTH - txt_special.get_height() - margin - txt_ready.get_height() - 4)
+                )
 
 
 
@@ -813,91 +1011,252 @@ class Game:
 
     
     def use_special_frontal(self):
-        """Ataque frontal poderoso: gran rect en dirección de mirada."""
-        import pygame
-        from core.settings import SPECIAL_FRONTAL_DAMAGE, SPECIAL_FRONTAL_KILLS
+            p = self.player
 
-        if not self.player.can_use_special_frontal():
-            return
+        # Comprobar si puede usarla (ya tienes helpers en Player normalmente)
+            if hasattr(p, "can_use_special_frontal"):
+                if not p.can_use_special_frontal():
+                            return
+            else:
+                # fallback: comprobamos el contador directamente
+                if p.special_kill_counter < SPECIAL_FRONTAL_KILLS:
+                    self.snd_slash_q.play()
+                    return
 
-        # Usar hitbox de ataque actual o construir base
-        base_rect = self.player.get_attack_hitbox()
-        if base_rect is None:
-            base_rect = self._build_base_attack_rect()
+            # Consumir kills
+            p.special_kill_counter -= SPECIAL_FRONTAL_KILLS
+            if p.special_kill_counter < 0:
+                p.special_kill_counter = 0
 
-        atk_rect = base_rect.copy()
+            # --- Área de daño frontal ---
+            base_rect = self._build_base_attack_rect()  # ya existe en Game
 
-        # Alargar el rect en dirección de facing
-        if self.player.facing in ("up", "down"):
-            atk_rect.height *= 4
-            if self.player.facing == "up":
-                atk_rect.top -= (atk_rect.height - base_rect.height)
-        else:
-            atk_rect.width *= 4
-            if self.player.facing == "left":
-                atk_rect.left -= (atk_rect.width - base_rect.width)
+            # Vamos a hacer un rect más largo hacia la dirección del jugador
+            rect = base_rect.copy()
+            expand_factor = 3  # alargas 3x el alcance
 
-        killed_now = 0
-        for enemy in self.enemies:
-            if not enemy.alive:
-                continue
-            if atk_rect.colliderect(enemy.rect):
-                enemy.take_damage(SPECIAL_FRONTAL_DAMAGE)
+            if p.facing == "up":
+                rect.height *= expand_factor
+                rect.y = base_rect.bottom - rect.height
+            elif p.facing == "down":
+                rect.height *= expand_factor
+            elif p.facing == "left":
+                rect.width *= expand_factor
+                rect.x = base_rect.right - rect.width
+            elif p.facing == "right":
+                rect.width *= expand_factor
+
+            # Aplicar daño a todos los enemigos que colisionen
+            for enemy in self.enemies:
                 if not enemy.alive:
-                    killed_now += 1
+                    continue
+                if rect.colliderect(enemy.rect):
+                    enemy.take_damage(SPECIAL_FRONTAL_DAMAGE)
 
-        self.enemies = [e for e in self.enemies if e.alive]
+            # Crear efecto visual
+            effect = {
+                "type": "frontal",
+                "time": 0.0,
+                "duration": 0.35,   # duración visual ~0.35s
+                "direction": p.facing,
+                "center": (p.x + p.width // 2, p.y + p.height // 2),
+            }
+            self.special_effects.append(effect)
 
-        # No usamos XP aquí para no desbalancear: reutilizamos handle... si quieres
-        if killed_now > 0:
-            # sumar kills/score/XP igual que un ataque normal
-            prev_kills = self.kills
-            self.kills += killed_now
-            self.score += killed_now * 20  # más puntos por especial
+            if hasattr(self, "snd_slash_q"):
+                self.snd_slash_q.play()
+                self.flash_timer = 0.10   # dura 0.10s
 
-            from core.settings import XP_PER_KILL
-            self.give_xp_to_player(killed_now * XP_PER_KILL)
-
-        # RF-02-07: reiniciar contador especial después de usar skill
-        self.player.reset_special_counter()
+            self.shake_timer = 0.20
+            self.shake_strength = 5
 
     def use_special_spiral(self):
-        """Ataque en área alrededor del jugador."""
-        import pygame
-        from core.settings import SPECIAL_SPIRAL_DAMAGE, SPECIAL_SPIRAL_KILLS, SPECIAL_RADIUS, XP_PER_KILL
+            p = self.player
 
-        if not self.player.can_use_special_spiral():
+            if hasattr(p, "can_use_special_spiral"):
+                if not p.can_use_special_spiral():
+                    return
+            else:
+                if p.special_kill_counter < SPECIAL_SPIRAL_KILLS:
+                    return
+
+            # Consumir kills
+            p.special_kill_counter -= SPECIAL_SPIRAL_KILLS
+            if p.special_kill_counter < 0:
+                p.special_kill_counter = 0
+
+            # Daño en área
+            cx = p.x + p.width // 2.5
+            cy = p.y + p.height // 2.5
+            radius_sq = SPECIAL_RADIUS * SPECIAL_RADIUS
+
+            for enemy in self.enemies:
+                if not enemy.alive:
+                    continue
+                ex, ey = enemy.rect.center
+                dx = ex - cx
+                dy = ey - cy
+                if dx * dx + dy * dy <= radius_sq:
+                    enemy.take_damage(SPECIAL_SPIRAL_DAMAGE)
+
+            # Efecto visual tipo explosión (usaremos varias direcciones)
+            effect = {
+                "type": "spiral",
+                "time": 0.0,
+                "duration": 0.45,  # un poco más larga que Q
+                "center": (cx, cy),
+                "shockwave": True,
+            }
+            self.special_effects.append(effect)
+
+                # 5) Sonido + shake SOLO si se lanzó el ataque
+            if hasattr(self, "snd_explosion_e"):
+                self.snd_explosion_e.play()
+            if hasattr(self, "snd_whoosh"):
+                self.snd_whoosh.play()
+                self.flash_timer = 0.15
+
+            self.shake_timer = 0.3
+            self.shake_strength = 12
+
+
+    def update_special_effects(self, dt: float):
+        """Actualiza el tiempo de vida de los efectos especiales."""
+        alive_effects = []
+        for eff in self.special_effects:
+            eff["time"] += dt
+            if eff["time"] < eff["duration"]:
+                alive_effects.append(eff)
+        self.special_effects = alive_effects
+
+
+    def draw_special_effects(self, camera_offset):
+
+        # Dirección lógica del ataque -> fila visual del sprite
+        dir_visual_map = {
+            "up": "down",
+            "down": "up",
+            "left": "left",
+            "right": "right",
+        }
+
+        for eff in self.special_effects:
+            t = eff["time"]
+            duration = eff["duration"]
+            progress = max(0.0, min(1.0, t / duration))
+
+            cx, cy = eff["center"]
+            screen_x = cx - camera_offset[0]
+            screen_y = cy - camera_offset[1]
+
+            # Animación frames
+            p = self.player
+            direction = eff.get("direction", "down")
+
+            # usamos la fila visual correcta según el mapa
+            visual_dir = dir_visual_map.get(direction, direction)
+            frames = p.swing_frames.get(visual_dir, [])
+
+            if eff.get("shockwave", False):
+                radius = int(40 + 120 * progress)
+                alpha = int(200 * (1 - progress))
+                sw = pygame.Surface((radius*2, radius*2), pygame.SRCALPHA)
+                pygame.draw.circle(sw, (255,255,255, alpha), (radius, radius), radius, 4)
+                self.screen.blit(sw, (screen_x - radius, screen_y - radius))
+
+
+            if not frames:
+                continue
+
+            frame_index = int(progress * (len(frames)-1))
+            base_frame = frames[frame_index]
+
+            # ==========================
+            # ATAQUE FRONTAL  (Q)
+            # ==========================
+            if eff["type"] == "frontal":
+
+                scale = 1.0 + 1.5 * progress
+                img = pygame.transform.rotozoom(base_frame, 0, scale)
+                rect = img.get_rect(center=(screen_x, screen_y))
+
+                # desplazamiento hacia adelante
+                offset = 90 * progress
+                if direction == "up":
+                    rect.centery -= offset
+                elif direction == "down":
+                    rect.centery += offset
+                elif direction == "left":
+                    rect.centerx -= offset
+                elif direction == "right":
+                    rect.centerx += offset
+
+                self.screen.blit(img, rect.topleft)
+
+            # ==========================
+            # ATAQUE ESPIRAL (E)
+            # ==========================
+            elif eff["type"] == "spiral":
+
+                frame_index = int(progress * (len(self.player.swing_frames["up"]) - 1))
+
+                for logical_dir in ["up", "down", "left", "right"]:
+                    # fila visual que debemos usar en el sprite
+                    visual_dir = dir_visual_map.get(logical_dir, logical_dir)
+                    frames_dir = self.player.swing_frames.get(visual_dir, [])
+                    if not frames_dir:
+                        continue
+
+                    base_frame_dir = frames_dir[frame_index]
+
+                    scale = 1.0 + 1.8 * progress
+                    dist = 110 * progress
+
+                    angle_map = {
+                        "up": 270,
+                        "down": 90,
+                        "left": 180,
+                        "right": 0,
+                    }
+                    ang = math.radians(angle_map[logical_dir])
+
+                    ex = screen_x + math.cos(ang) * dist
+                    ey = screen_y + math.sin(ang) * dist
+
+                    img = pygame.transform.rotozoom(base_frame_dir, 0, scale)
+                    rect = img.get_rect(center=(ex, ey))
+                    self.screen.blit(img, rect.topleft)
+
+    def start_boss_music(self):
+        base_path = os.path.dirname(__file__)
+        music_path = os.path.join(base_path, "..", "assets", "Sounds", "LaPeleaConelDiablo.wav")
+
+        try:
+            pygame.mixer.music.load(music_path)
+            pygame.mixer.music.set_volume(0.8)
+            pygame.mixer.music.play(-1)  # loop infinito
+        except pygame.error as e:
+            print("Error cargando música del jefe:", e)
+
+    def spawn_boss_diablo(self):
+        """Invoca al jefe Diablo y prepara el combate."""
+        if self.boss_spawned:
             return
 
-        center_x = self.player.x + self.player.width // 2
-        center_y = self.player.y + self.player.height // 2
+        self.boss_spawned = True
+        self.boss_active = True
 
-        area_rect = pygame.Rect(
-            center_x - SPECIAL_RADIUS,
-            center_y - SPECIAL_RADIUS,
-            SPECIAL_RADIUS * 2,
-            SPECIAL_RADIUS * 2
-        )
+        # Limpiar enemigos normales
+        self.enemies.clear()
 
-        killed_now = 0
-        for enemy in self.enemies:
-            if not enemy.alive:
-                continue
-            if area_rect.colliderect(enemy.rect):
-                enemy.take_damage(SPECIAL_SPIRAL_DAMAGE)
-                if not enemy.alive:
-                    killed_now += 1
+        # Posicionar al jefe cerca del centro del mapa
+        boss_x = self.player.x + 150
+        boss_y = self.player.y - 100
+        boss = BossDiablo(boss_x, boss_y)
+        self.enemies.append(boss)
 
-        self.enemies = [e for e in self.enemies if e.alive]
-
-        if killed_now > 0:
-            self.kills += killed_now
-            self.score += killed_now * 25  # aún más puntos
-
-            self.give_xp_to_player(killed_now * XP_PER_KILL)
-
-        # Reinicio del contador de kills especial (RF-02-07)
-        self.player.reset_special_counter()
+        # Música del jefe
+        self.start_boss_music()
 
 
 

@@ -11,6 +11,12 @@ class Player:
         self.max_health = PLAYER_MAX_HEALTH
         self.health = self.max_health
 
+                # --- Feedback de daño recibido ---
+        self.is_hurt = False
+        self.hurt_timer = 0.0
+        self.hurt_duration = 0.20  # duración del flash (~0.2 s)
+
+
         # --- Sprint 4: inventario simple de vendas ---
         self.bandages = 0
 
@@ -27,6 +33,26 @@ class Player:
         self.attack_duration = 0.35
         self.attack_timer = 0.0
         self.attack_damage = 25   # puedes tunear esto
+
+        # --- Estados de daño / muerte ---
+        self.is_hurt = False              # está en animación de daño
+        self.hurt_timer = 0.0
+        self.hurt_duration = 0.25         # dura ~0.25s la animación de daño
+
+        self.is_dying = False             # se está muriendo (animación de muerte)
+        self.death_animation_finished = False
+        self.death_frame_index = 0
+        self.death_animation_speed = 0.10
+        self.death_animation_timer = 0.0
+
+        sound_path = os.path.join(os.path.dirname(__file__), "..", "assets", "sounds")
+        self.snd_slash_o = pygame.mixer.Sound(os.path.join(sound_path, "SlashO.mp3"))
+        self.snd_slash_o.set_volume(0.7)
+
+
+
+
+        self.hit_enemies_this_swing = set()
 
                 # --- Sprint 2: stats base de combate ---
         from core.settings import (
@@ -65,6 +91,13 @@ class Player:
 
         # Inicializar stats derivados
         self.recalculate_stats()
+
+        # ejemplo dentro de __init__, después de cargar el sprite sheet principal
+        self.swing_sheet = pygame.image.load(
+            os.path.join(os.path.dirname(__file__), "..", "assets", "sprites", "attack_swing.png")
+        ).convert_alpha()
+
+        self.load_swing_animations()
 
 
         self.movement = {'up': False, 'down': False, 'left': False, 'right': False}
@@ -108,6 +141,14 @@ class Player:
             'idle': {'unarmed': {}, 'armed': {}}
         }
 
+        # Animaciones específicas de muerte por dirección
+        self.death_animations = {
+            'up': [],
+            'down': [],
+            'left': [],
+            'right': [],
+        }
+
         # Load all animations
         self.load_animations()
 
@@ -141,6 +182,10 @@ class Player:
             surf = pygame.Surface((self.sprite_size, self.sprite_size), pygame.SRCALPHA)
             surf.fill((255, 0, 255))
             self.image = surf
+
+
+
+
 
     def load_animations(self):
         """Carga animaciones de caminar, estar quieto y ataque (armado y sin arma)."""
@@ -192,6 +237,19 @@ class Player:
         for direction, row in attack_rows_armed.items():
             self.animations['armed'][f'attack_{direction}'] = load_from_row(
                 row, num_frames=6, is_attack=True, direction=direction, armed=True)
+            
+        death_rows = {
+            'down': 21,
+        }
+
+        for direction, row in death_rows.items():
+            try:
+                frames = load_from_row(row, num_frames=6)  # asume 6 frames, ajusta si hace falta
+            except Exception:
+                frames = []
+
+            # Si no hay frames válidos, lo dejamos vacío (el código se defenderá)
+            self.death_animations[direction] = frames or []
 
     def _load_attack_swing_frames(self):
         """
@@ -252,13 +310,61 @@ class Player:
                 self.start_attack()
 
     def start_attack(self):
-        """Inicia animación de ataque (se bloquea movimiento mientras dura)."""
+        """
+        Inicia animación de ataque:
+        - Detiene el movimiento actual
+        - Mantiene la dirección de mirada (self.facing)
+        - Limpia el registro de enemigos golpeados en este swing
+        """
+        # 1) Detener movimiento: aunque estuviera corriendo, al atacar se frena
+        self.movement = {'up': False, 'down': False, 'left': False, 'right': False}
+
+        # 2) Enemigos golpeados en este ataque (para no pegar mil veces por swing)
+        if hasattr(self, "hit_enemies_this_swing"):
+            self.hit_enemies_this_swing.clear()
+
+        # 3) Estado de ataque
         self.is_attacking = True
         self.attack_timer = 0.0
         self.animation_frame = 0
+
+        self.snd_slash_o.play()
+
+        # Usamos la dirección actual de mirada
         self.current_animation = f'attack_{self.facing}'
 
     def update(self, dt=1/60):
+        # 1) Si está en animación de muerte, solo actualizamos eso y salimos
+        if self.is_dying:
+            frames = self.death_animations.get(self.facing, [])
+
+            if frames:
+                self.death_animation_timer += dt
+                if self.death_animation_timer >= self.death_animation_speed:
+                    self.death_animation_timer = 0.0
+                    if self.death_frame_index < len(frames) - 1:
+                        self.death_frame_index += 1
+                        self.image = frames[self.death_frame_index]
+                    else:
+                        # Animación de muerte terminada
+                        self.death_animation_finished = True
+            else:
+                # Si no hay frames cargados, marcamos la muerte tras un pequeño delay
+                self.death_animation_timer += dt
+                if self.death_animation_timer >= 0.5:
+                    self.death_animation_finished = True
+
+            return  # no se mueve ni ataca durante la muerte
+        
+            # 2) Animación de daño (hurt) sencilla: pequeño “stun” muy corto
+        # --- Actualizar efecto de daño (hurt flash) ---
+        if self.is_hurt:
+            self.hurt_timer -= dt
+            if self.hurt_timer <= 0:
+                self.hurt_timer = 0.0
+                self.is_hurt = False
+
+
         self.handle_input()
 
         # ⚔️ ATAQUE
@@ -421,17 +527,17 @@ class Player:
 
         # --- FUERZA ---
         # +20% daño por nivel de fuerza
-        strength_bonus = 0.20 * (self.strength_level - 1)
+        strength_bonus = 0.10 * (self.strength_level - 1)
         self.attack_damage = base_damage * (1.0 + strength_bonus)
 
         # --- RANGO ---
         # +15% rango por nivel de rango
-        range_bonus = 0.15 * (self.range_level - 1)
+        range_bonus = 0.10 * (self.range_level - 1)
         self.attack_range_multiplier = base_range * (1.0 + range_bonus)
 
         # --- RESISTENCIA ---
         # -15% daño recibido por nivel de resistencia
-        resistance_bonus = 0.15 * (self.resistance_level - 1)
+        resistance_bonus = 0.10 * (self.resistance_level - 1)
         self.damage_taken_multiplier = max(0.4, 1.0 - resistance_bonus)
 
 
@@ -554,11 +660,25 @@ class Player:
 
 
     def take_damage(self, amount: float):
-        # Aplicar resistencia (daño reducido)
+        """Aplica daño al jugador y activa el efecto de daño (hurt flash)."""
+        # Si el daño es cero o negativo, no hacemos nada
+        if amount <= 0:
+            return
+
         factor = getattr(self, "damage_taken_multiplier", 1.0)
+
+        # Vida antes del golpe (por si luego quieres usarlo)
+        prev_health = self.health
+
+        # Aplicar daño con resistencia
         self.health -= amount * factor
         if self.health < 0:
             self.health = 0
+
+        # Si realmente perdió vida y sigue vivo, activamos el flash de daño
+        if self.health < prev_health and self.health > 0:
+            self.is_hurt = True
+            self.hurt_timer = self.hurt_duration
 
     def use_bandage(self):
         """Usa una venda para curarse si es posible."""
@@ -581,3 +701,77 @@ class Player:
     def can_use_special_spiral(self):
         from core.settings import SPECIAL_SPIRAL_KILLS
         return self.special_kill_counter >= SPECIAL_SPIRAL_KILLS
+
+
+    def take_damage(self, amount: float):
+        """Aplica daño al jugador, lanzando animación de daño o muerte."""
+        # Si ya está en animación de muerte, ignoramos más daño
+        if self.is_dying:
+            return
+
+        # Aplicar modificador de resistencia
+        effective_damage = amount * getattr(self, "damage_taken_multiplier", 1.0)
+        self.health -= effective_damage
+
+        if self.health <= 0:
+            self.health = 0
+            self.start_death_animation()
+        else:
+            self.start_hurt_animation()
+
+    def start_hurt_animation(self):
+        """Activa una breve animación de daño (parpadeo/pose de golpe)."""
+        # Si ya se está muriendo, no tiene sentido mostrar hurt
+        if self.is_dying:
+            return
+        self.is_hurt = True
+        self.hurt_timer = 0.0
+
+    def start_death_animation(self):
+        """Inicia la animación de muerte del jugador."""
+        self.is_dying = True
+        self.is_attacking = False
+        self.is_hurt = False
+
+        self.death_animation_finished = False
+        self.death_frame_index = 0
+        self.death_animation_timer = 0.0
+
+        # Elegir frames de muerte según dirección actual
+        frames = self.death_animations.get(self.facing, [])
+        if frames:
+            self.image = frames[0]
+
+    def get_swing_base_image(self):
+        """Devuelve la imagen base del swing para que el Game la use en especiales."""
+        return getattr(self, "swing_base_image", None)
+    
+    def load_swing_animations(self):
+        sheet = self.swing_sheet
+        sheet_width = sheet.get_width()
+        sheet_height = sheet.get_height()
+
+        rows = 4  # arriba, abajo, izquierda, derecha
+        frame_height = sheet_height // rows
+
+        # detectamos número de frames
+        frame_width = frame_height  # casi siempre es cuadrado, si no, ajusta
+        cols = sheet_width // frame_width
+
+        # Diccionario final
+        self.swing_frames = {
+            "up": [],
+            "down": [],
+            "left": [],
+            "right": []
+        }
+
+        dir_map = ["up", "down", "left", "right"]
+
+        for row_idx, direction in enumerate(dir_map):
+            y = row_idx * frame_height
+            for col in range(cols):
+                x = col * frame_width
+                frame = sheet.subsurface((x, y, frame_width, frame_height))
+                self.swing_frames[direction].append(frame)
+
