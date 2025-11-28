@@ -70,9 +70,9 @@ ENEMY_SPRITES = {
     },
 }
 
-# --- Armas jugador ---
+# --- Armas jugador ---1
 FIST_BASE_DAMAGE = 10
-MACHETE_BASE_DAMAGE = 60
+MACHETE_BASE_DAMAGE = 17.5
 
 FIST_BASE_RANGE = 1.0    # multiplicador de rango
 MACHETE_BASE_RANGE = 1.5
@@ -94,6 +94,6 @@ KILLS_PER_BANDAGE = 6         # cada cuántas kills ganas 1 venda
 SPECIAL_FRONTAL_KILLS = 12    # kills necesarias para Q
 SPECIAL_SPIRAL_KILLS = 20     # kills necesarias para E
 
-SPECIAL_FRONTAL_DAMAGE = 999  # daño muy alto en línea (ajustable)
-SPECIAL_SPIRAL_DAMAGE = 999   # daño muy alto en área (ajustable)
+SPECIAL_FRONTAL_DAMAGE = 100  # daño muy alto en línea (ajustable)
+SPECIAL_SPIRAL_DAMAGE = 180   # daño muy alto en área (ajustable)
 SPECIAL_RADIUS = 200          # radio del ataque en área (E)

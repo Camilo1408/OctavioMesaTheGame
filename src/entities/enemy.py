@@ -338,9 +338,7 @@ class Enemy(Entity):
         if not self.alive:
             return
 
-        # ------------------------
-        # ESTADOS QUE NO MUEVEN
-        # ------------------------
+        # Estados que ignoran movimiento
         if self.state == EnemyState.DEATH:
             self._update_animation(dt, loop=False)
             if self.animation_finished:
@@ -353,10 +351,7 @@ class Enemy(Entity):
                 self._set_animation_for(EnemyState.RUN)
             return
 
-        # ------------------------
-        # DISTANCIA AL JUGADOR
-        # ------------------------
-        # Usamos la posición del enemigo y del jugador
+        # Distancia al jugador
         dx = player.x - self.x
         dy = player.y - self.y
         dist_sq = dx * dx + dy * dy
@@ -365,14 +360,12 @@ class Enemy(Entity):
         dir_x = dx / dist if dist > 0 else 0.0
         dir_y = dy / dist if dist > 0 else 0.0
 
-        # Actualizar dirección (up/down/left/right)
+        # Dirección según vector al jugador
         self._update_direction_from_vector(dx, dy)
 
         now = pygame.time.get_ticks() / 1000.0
 
-        # ------------------------
-        # ¿PUEDE ATACAR?
-        # ------------------------
+        # ¿Puede atacar?
         can_attack = (
             dist <= self.attack_range
             and (now - self.last_attack_time) >= self.attack_cooldown
@@ -381,9 +374,7 @@ class Enemy(Entity):
         if can_attack:
             self._start_attack()
 
-        # ------------------------
-        # ESTADO ATTACK
-        # ------------------------
+        # Ataque
         if self.state == EnemyState.ATTACK:
             self._update_animation(dt, loop=False)
 
@@ -399,7 +390,7 @@ class Enemy(Entity):
                 atk_rect = self.get_attack_hitbox()
 
                 if atk_rect is not None:
-                    # Hitbox reducida del jugador
+                    # Hitbox del jugador (reducida si existe, si no usamos rect/width/height)
                     if hasattr(player, "hitbox_width"):
                         player_rect = pygame.Rect(
                             player.x + player.hitbox_offset_x,
@@ -423,46 +414,30 @@ class Enemy(Entity):
                 self.attack_executed = True
 
             if self.animation_finished:
-                # Tras atacar, nos quedamos cerca del jugador:
-                # si sigue en rango, pasamos a idle; si no, volvemos a RUN
-                if dist <= self.attack_range * 1.1:
-                    self._set_animation_for(EnemyState.IDLE)
-                else:
-                    self._set_animation_for(EnemyState.RUN)
+                self._set_animation_for(EnemyState.RUN)
 
             return
 
-        # ------------------------
-        # MOVIMIENTO / IDLE
-        # ------------------------
-        # Si estamos MUY cerca del jugador (pegados por hitbox), NO seguimos
-        # empujando: nos quedamos quietos (idle) y dejamos que el sistema
-        # de colisiones del Game los mantenga separados.
-        MIN_SEPARATION = 8  # puedes ajustar
-        if dist <= max(self.attack_range * 0.9, MIN_SEPARATION):
-            # Quieto, mirando al jugador
-            self._set_animation_for(EnemyState.IDLE)
-            self._update_animation(dt)
-            return
+        # Movimiento
+        if dist > 5:
+            if dist > self.attack_range * 1.5:
+                desired_state = EnemyState.RUN
+            else:
+                desired_state = EnemyState.WALK
 
-        # Si no estamos pegados, sí perseguimos
-        # Distancia grande -> RUN, distancia media -> WALK
-        if dist > self.attack_range * 1.5:
-            desired_state = EnemyState.RUN
+            if self.state != desired_state:
+                self._set_animation_for(desired_state)
+
+            move_speed = self.speed * (1.5 if desired_state == EnemyState.RUN else 1.0)
+            move_speed *= self.speed_variation
+
+            self.x += dir_x * move_speed
+            self.y += dir_y * move_speed
         else:
-            desired_state = EnemyState.WALK
+            if self.state != EnemyState.IDLE:
+                self._set_animation_for(EnemyState.IDLE)
 
-        if self.state != desired_state:
-            self._set_animation_for(desired_state)
-
-        move_speed = self.speed * (1.5 if desired_state == EnemyState.RUN else 1.0)
-        move_speed *= self.speed_variation
-
-        self.x += dir_x * move_speed
-        self.y += dir_y * move_speed
-
-        # Actualizar animación de caminar/correr
-        self._update_animation(dt)
+        self._update_animation(dt, loop=True)
 
     # ----------------------
     # DIBUJADO
