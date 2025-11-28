@@ -15,6 +15,7 @@ from core.settings import (
     DEBUG_DRAW_ATTACK_FIELDS, ENEMY_BASE_HEALTH, SPECIAL_FRONTAL_DAMAGE,
     SPECIAL_SPIRAL_DAMAGE, SPECIAL_RADIUS, XP_PER_KILL, SPECIAL_FRONTAL_KILLS,SPECIAL_SPIRAL_KILLS
 )
+from core.minimapa import Minimap
 import math, os, random
 from entities.boss_diablo import BossDiablo
 
@@ -85,6 +86,7 @@ class Game:
         print("================================")
 
         self.camera = Camera(SCREEN_WIDTH, SCREEN_HEIGTH)
+        self.minimap = Minimap(SCREEN_WIDTH, SCREEN_HEIGTH, minimap_size=100)
         self.tile_map = TileMap(tile_size=32, width=50, height=50)
         self.tile_map.build_map()
         # ---- Enemigos ----
@@ -857,8 +859,10 @@ class Game:
         # 4) UI siempre encima
         self.draw_ui()
 
-        # 3.5) Efectos visuales de habilidades especiales por encima de entidades
+        # Efectos visuales de habilidades especiales por encima de entidades
         self.draw_special_effects(camera_offset)
+
+        self.minimap.draw(self.screen, self.player, self.enemies)
 
         if self.flash_timer > 0:
             alpha = int(255 * (self.flash_timer / 0.15))
