@@ -37,7 +37,7 @@ class BossDiablo(Entity):
 
         # --- Estadísticas del jefe ---
         # Mucha más vida que un enemigo normal
-        self.max_health = ENEMY_BASE_HEALTH * 10
+        self.max_health = ENEMY_BASE_HEALTH * 15
         self.health = self.max_health
         self.alive = True
 
@@ -236,8 +236,11 @@ class BossDiablo(Entity):
         if self.state == "death":
             # Anim de muerte sin loop (se queda en el último frame)
             self.update_animation(dt, loop=False)
-            return
 
+            # Cuando llegamos al último frame, ya lo consideramos muerto
+            if self.current_frame_index == len(self.current_frames) - 1:
+                self.alive = False
+            return
         # --------------------------------------------------
         # Distancia REAL usando hitboxes (no solo x,y)
         # --------------------------------------------------
@@ -392,11 +395,20 @@ class BossDiablo(Entity):
     # Dibujar en pantalla (llamado desde Game.draw)
     # ==========================================================
     def draw(self, screen, camera_offset):
-        if not self.alive:
-            return
+        # Si no hay cámara, prevenir error
+        if camera_offset is None or len(camera_offset) != 2:
+            camera_offset = (0, 0)
 
+        # Asegurar enteros
+        cam_x = int(camera_offset[0])
+        cam_y = int(camera_offset[1])
+
+        # Frame actual
         frame = self.current_frames[self.current_frame_index]
-        screen.blit(
-            frame,
-            (self.x - camera_offset[0], self.y - camera_offset[1])
-        )
+
+        # Posición final
+        draw_x = int(self.x - cam_x)
+        draw_y = int(self.y - cam_y)
+
+        # Verificar que sea una tupla válida
+        screen.blit(frame, (draw_x, draw_y))
