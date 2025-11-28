@@ -696,6 +696,9 @@ class Player:
         self.health -= amount * factor
         if self.health < 0:
             self.health = 0
+            self.start_death_animation()
+        else:
+            self.start_hurt_animation()
 
         # Si realmente perdió vida y sigue vivo, activamos el flash de daño
         if self.health < prev_health and self.health > 0:
@@ -723,22 +726,6 @@ class Player:
     def can_use_special_spiral(self):
         from core.settings import SPECIAL_SPIRAL_KILLS
         return self.special_kill_counter >= SPECIAL_SPIRAL_KILLS
-    
-    def take_damage(self, amount: float):
-        """Aplica daño al jugador, lanzando animación de daño o muerte."""
-        # Si ya está en animación de muerte, ignoramos más daño
-        if self.is_dying:
-            return
-
-        # Aplicar modificador de resistencia
-        effective_damage = amount * getattr(self, "damage_taken_multiplier", 1.0)
-        self.health -= effective_damage
-
-        if self.health <= 0:
-            self.health = 0
-            self.start_death_animation()
-        else:
-            self.start_hurt_animation()
 
     def start_hurt_animation(self):
         """Activa una breve animación de daño (parpadeo/pose de golpe)."""

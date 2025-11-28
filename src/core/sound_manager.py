@@ -18,20 +18,20 @@ class SoundManager:
         # Definir todos los sonidos a cargar con sus volúmenes
         sound_files = {
             # Diablo
-            "diablo_attack": ("diablo-attack.wav", 0.7),
-            "diablo_death": ("diablo-death.wav", 0.8),
-            "diablo_hurt": ("diablo-hurt.mp3", 0.6),
+            "diablo_attack": ("diablo-attack.wav", 0.4),
+            "diablo_death": ("diablo-death.wav", 0.4),
+            "diablo_hurt": ("diablo-hurt.mp3", 0.4),
             "diablo_roar": ("diablo-roar.mp3", 0.9),
             
             # Octavio (jugador)
-            "octavio_attack": ("octavio-attack.mp3", 0.7),
+            "octavio_attack": ("octavio-attack.mp3", 0.1),
             "octavio_death": ("octavio-death.mp3", 0.8),
-            "octavio_hurt": ("octavio-hurt.mp3", 0.6),
+            "octavio_hurt": ("octavio-hurt.mp3", 0.1),
             
             # Orcos (enemigos)
-            "orc_attack": ("orc-attack.mp3", 0.6),
-            "orc_death": ("orc-death.mp3", 0.7),
-            "orc_hurt": ("orc-hurt.mp3", 0.5),
+            "orc_attack": ("orc-attack.mp3", 0.1),
+            "orc_death": ("orc-death.mp3", 0.3),
+            "orc_hurt": ("orc-hurt.mp3", 0.1),
         }
         
         # Cargar cada sonido
