@@ -27,7 +27,7 @@ class BossDiablo(Entity):
       - .get_attack_hitbox()
     """
 
-    def __init__(self, x, y):
+    def __init__(self, x, y, sound_manager=None):
         # tamaño base del sprite (cada celda)
         cell = 192
         super().__init__(x, y, cell, cell, speed=1.6)
@@ -35,9 +35,12 @@ class BossDiablo(Entity):
         # Escala para que se vea más grande que Octavio
         self.scale = 2.0
 
+        # Gestor de sonidos
+        self.sound_manager = sound_manager
+
         # --- Estadísticas del jefe ---
         # Mucha más vida que un enemigo normal
-        self.max_health = ENEMY_BASE_HEALTH * 10
+        self.max_health = ENEMY_BASE_HEALTH * 15
         self.health = self.max_health
         self.alive = True
 
@@ -45,7 +48,7 @@ class BossDiablo(Entity):
         self.damage = 2.5  # se usa como "multiplicador" sobre el daño base del enemigo normal si quieres
 
         self.attack_range = ENEMY_ATTACK_RANGE * 1.4
-        self.attack_cooldown = 2.0  # segundos entre ataques (lo que pediste)
+        self.attack_cooldown = 1.2  # segundos entre ataques (lo que pediste)
         self.last_attack_time = 0.0
         self.attack_executed = False
 
@@ -135,14 +138,6 @@ class BossDiablo(Entity):
         # Rect para colisiones generales (igual que Enemy)
         self._rect = pygame.Rect(self.x, self.y, self.width, self.height)
 
-        # --- Sonido del ataque ---
-        snd_path = os.path.join(os.path.dirname(__file__), "..", "assets", "Sounds", "SlashD.mp3")
-        try:
-            self.sound_attack = pygame.mixer.Sound(snd_path)
-            self.sound_attack.set_volume(0.6)
-        except pygame.error:
-            self.sound_attack = None  # si falla, simplemente no suena
-
         self.is_boss = True
 
 
@@ -213,7 +208,6 @@ class BossDiablo(Entity):
     # Daño recibido (llamado desde Game.handle_player_attack_collisions)
     # ==========================================================
     def take_damage(self, amount: float):
-        # Si ya está en animación de muerte, ignoramos más daño
         if not self.alive or self.state == "death":
             return
 
@@ -221,7 +215,11 @@ class BossDiablo(Entity):
         if self.health <= 0:
             self.health = 0
             self.set_state("death")
-            # OJO: NO ponemos self.alive = False aquí
+            if self.sound_manager:
+                self.sound_manager.play("diablo_death")
+        else:
+            if self.sound_manager:
+                self.sound_manager.play("diablo_hurt")
 
     # ==========================================================
     # Lógica de IA
@@ -236,8 +234,11 @@ class BossDiablo(Entity):
         if self.state == "death":
             # Anim de muerte sin loop (se queda en el último frame)
             self.update_animation(dt, loop=False)
-            return
 
+            # Cuando llegamos al último frame, ya lo consideramos muerto
+            if self.current_frame_index == len(self.current_frames) - 1:
+                self.alive = False
+            return
         # --------------------------------------------------
         # Distancia REAL usando hitboxes (no solo x,y)
         # --------------------------------------------------
@@ -297,8 +298,8 @@ class BossDiablo(Entity):
 
             # Frame donde "conecta" el golpe
             if self.current_frame_index == mid and not self.attack_executed:
-                if self.sound_attack:
-                    self.sound_attack.play()
+                if self.sound_manager:
+                    self.sound_manager.play("diablo_attack")
 
                 atk_rect = self.get_attack_hitbox()
                 if atk_rect is not None and atk_rect.colliderect(player_hitbox):
@@ -392,11 +393,20 @@ class BossDiablo(Entity):
     # Dibujar en pantalla (llamado desde Game.draw)
     # ==========================================================
     def draw(self, screen, camera_offset):
-        if not self.alive:
-            return
+        # Si no hay cámara, prevenir error
+        if camera_offset is None or len(camera_offset) != 2:
+            camera_offset = (0, 0)
 
+        # Asegurar enteros
+        cam_x = int(camera_offset[0])
+        cam_y = int(camera_offset[1])
+
+        # Frame actual
         frame = self.current_frames[self.current_frame_index]
-        screen.blit(
-            frame,
-            (self.x - camera_offset[0], self.y - camera_offset[1])
-        )
+
+        # Posición final
+        draw_x = int(self.x - cam_x)
+        draw_y = int(self.y - cam_y)
+
+        # Verificar que sea una tupla válida
+        screen.blit(frame, (draw_x, draw_y))

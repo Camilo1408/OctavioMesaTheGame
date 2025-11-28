@@ -16,6 +16,8 @@ from core.settings import (
     SPECIAL_SPIRAL_DAMAGE, SPECIAL_RADIUS, XP_PER_KILL, SPECIAL_FRONTAL_KILLS,SPECIAL_SPIRAL_KILLS
 )
 from core.minimapa import Minimap
+from core.sound_manager import SoundManager
+from entities.item import Item
 import math, os, random
 from entities.boss_diablo import BossDiablo
 
@@ -28,6 +30,19 @@ class Game:
         pygame.display.set_caption(WINDOW_TITLE)
         self.clock = pygame.time.Clock()
         self.running = True
+
+        # --- Fondo del menú principal ---
+        bg_path = os.path.join(
+            os.path.dirname(__file__),
+            "..",
+            "assets",
+            "sprites",
+            "FondoPantallaInicio.jpg",
+        )
+        try:
+            self.menu_background = pygame.image.load(bg_path).convert()
+        except pygame.error:
+            self.menu_background = None
         
         # --- Estados de juego ---
         self.state = GameState.MENU
@@ -53,6 +68,7 @@ class Game:
         self.spawn_interval = ENEMY_INITIAL_SPAWN_INTERVAL
         self.max_enemies_on_screen = ENEMY_MAX_ON_SCREEN_BASE
 
+        self.sound_manager = SoundManager()
 
         # Create game objects
         # Configure player to use 8 frames per direction and 1-based row indexing
@@ -60,7 +76,8 @@ class Game:
                             frames_per_direction=8,
                             unarmed_row=39,
                             armed_row=9,
-                            row_index_base=1)
+                            row_index_base=1,
+                            sound_manager=self.sound_manager)
         
         self.level = self.player.level  # sincronizar nivel del juego con nivel del jugador
 
@@ -94,19 +111,20 @@ class Game:
         # Enemigos se crean cuando realmente empieza la partida
         # sincronizar nivel del juego con nivel del jugador
 
+        # ---- Ítems ----
+        self.items = []  # lista de ítems en el mapa
+        self.item_spawned_this_level = False  # bandera para spawnar 1 por nivel
+
         self.flash_timer = 0.0
         self.shake_timer = 0.0
         self.shake_strength = 0
-
-                    # === CARGA DE SONIDOS ===
+        
+        # Cargar sonidos de habilidades especiales
         sound_path = os.path.join(os.path.dirname(__file__), "..", "assets", "sounds")
-
         self.snd_slash_q = pygame.mixer.Sound(os.path.join(sound_path, "Slash.mp3"))
         self.snd_slash_d = pygame.mixer.Sound(os.path.join(sound_path, "SlashD.mp3"))
         self.snd_explosion_e = pygame.mixer.Sound(os.path.join(sound_path, "Explosion.mp3"))
         self.snd_whoosh = pygame.mixer.Sound(os.path.join(sound_path, "Woosh.mp3"))
-
-        # Ajustar volumen si deseas
         self.snd_slash_q.set_volume(0.7)
         self.snd_slash_d.set_volume(0.7)
         self.snd_explosion_e.set_volume(0.8)
@@ -115,6 +133,18 @@ class Game:
         # --- Estado del jefe ---
         self.boss_active = False      # Hay combate contra el Diablo
         self.boss_spawned = False     # Ya se creó al menos una vez
+        self.boss_defeated = False # True cuando lo matas en esta partida
+        self.victory_pending = False
+        self.victory_timer = 0.0
+
+        # --- Música de fondo (enemigos normales) ---
+        music_base = os.path.join(os.path.dirname(__file__), "..", "assets", "Sounds")
+        self.normal_music_tracks = [
+            os.path.join(music_base, "ConVerraquera.wav"),
+            os.path.join(music_base, "ElJornalero.wav"),
+            os.path.join(music_base, "MulaHijueputa.wav"),
+        ]
+        self.last_music_index = -1
 
 
 
@@ -165,11 +195,34 @@ class Game:
         self.max_enemies_on_screen = ENEMY_MAX_ON_SCREEN_BASE
         self.spawn_interval = ENEMY_INITIAL_SPAWN_INTERVAL
 
+        try:
+            pygame.mixer.music.stop()
+        except:
+            pass
+
         # --- Reset completo de enemigos y spawns ---
         # eliminar TODOS los enemigos de la partida anterior
         self.enemies = []
+
+        # Reset de ítems
+        self.items = []
+        self.item_spawned_this_level = False
+
         # reiniciar el temporizador de spawn
         self.spawn_timer = 0.0
+        self.boss = None
+        self.boss_active = False
+        self.boss_spawned = False
+        self.boss_defeated = False
+        self.victory_timer = 0.0
+        
+
+        # Por si la música del boss seguía sonando de la partida anterior
+        try:
+            if hasattr(self, "boss_music") and self.boss_music is not None:
+                self.boss_music.stop()
+        except Exception:
+            pass
 
         # si estás usando un registro de enemigos ya contados (por si acaso)
         if hasattr(self, "killed_enemies_registered"):
@@ -202,6 +255,9 @@ class Game:
         self.state = GameState.RUNNING
         # Si quieres, puedes spawnear algunos al inicio:
         self.spawn_initial_enemies(count=5)
+        # Spawnear ítem de aguardiente
+        self.spawn_aguardiente_item()
+        self.start_normal_music()
 
 
 
@@ -230,10 +286,34 @@ class Game:
             health = int(ENEMY_BASE_HEALTH * (ENEMY_HEALTH_GROWTH ** level_index))
             damage = ENEMY_BASE_DAMAGE * (ENEMY_DAMAGE_GROWTH ** level_index)
 
-            enemy = Enemy(x, y, health=health, damage=damage)
+            enemy = Enemy(x, y, health=health, damage=damage, sound_manager=self.sound_manager)
             self.enemies.append(enemy) 
 
-
+    def spawn_aguardiente_item(self):
+        """Spawnea un ítem de aguardiente en posición aleatoria."""
+        if self.item_spawned_this_level:
+            return
+        
+        import random
+        from core.settings import MAP_WIDTH_PX, MAP_HEIGHT_PX, TILE_SIZE
+        
+        # Posición aleatoria lejos del jugador
+        while True:
+            x = random.randint(TILE_SIZE * 5, MAP_WIDTH_PX - TILE_SIZE * 5)
+            y = random.randint(TILE_SIZE * 5, MAP_HEIGHT_PX - TILE_SIZE * 5)
+            
+            dx = x - self.player.x
+            dy = y - self.player.y
+            dist = math.sqrt(dx * dx + dy * dy)
+            
+            # Al menos 300 píxeles de distancia del jugador
+            if dist > 300:
+                break
+        
+        item = Item(x, y, item_type="aguardiente")
+        self.items.append(item)
+        self.item_spawned_this_level = True
+        print(f"[GAME] Aguardiente spawneado en ({x}, {y})")
 
     def handle_events(self):
         for event in pygame.event.get():
@@ -275,7 +355,10 @@ class Game:
                         elif event.key == pygame.K_m:
                             self.save_current_run_summary()
                             self.state = GameState.MENU
-
+                            try:
+                                pygame.mixer.music.stop()
+                            except:
+                                pass
 
                 elif self.state == GameState.MENU:
                     if event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
@@ -284,6 +367,11 @@ class Game:
                         self.running = False
 
                 elif self.state == GameState.GAME_OVER:
+                    # Detener música del jefe SIEMPRE al entrar a GAME_OVER
+                    try:
+                        pygame.mixer.music.stop()
+                    except:
+                        pass
                     if event.key == pygame.K_RETURN:
                         self.start_game()
                     elif event.key == pygame.K_m:
@@ -291,11 +379,23 @@ class Game:
                         self.state = GameState.MENU
                     elif event.key == pygame.K_ESCAPE:
                         self.running = False
+                
+                elif self.state == GameState.VICTORY:
+                    if event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_RETURN:
+                            self.start_game()
+                        elif event.key == pygame.K_m:
+                            self.save_current_run_summary()
+                            self.stop_music()
+                            self.state = GameState.MENU
+                        elif event.key == pygame.K_ESCAPE:
+                            self.running = False
 
 
     def update(self, dt: float):
         if self.state != GameState.RUNNING:
             return
+
         # Tiempo total de la partida
         self.run_time += dt
 
@@ -308,102 +408,150 @@ class Game:
         self.handle_enemy_collisions()
         self.handle_player_attack_collisions()
         self.update_enemy_spawning(dt)
+        # Actualizar ítems
+        for item in self.items:
+            item.update(dt)
 
-        # Actualizar efectos visuales de habilidades especiales
+        # Detectar colisión con ítems
+        self.handle_item_collection()
+
+        # Si Octavio muere → GAME OVER
+        if self.player.health <= 0:
+            self.stop_music()          # por si estaba la música del jefe
+            self.state = GameState.GAME_OVER
+            return
+
+        # Comprobar estado del jefe y posible victoria
+        self.check_boss_status(dt)
+
+        # --- Actualizar efectos especiales (Q/E) ---
         self.update_special_effects(dt)
 
-        # Cambiar a GAME_OVER solo cuando termine la animación de muerte
-        if self.player.health <= 0 and getattr(self.player, "death_animation_finished", False):
-            self.state = GameState.GAME_OVER
-            # NO LLAMAR reset_game() aquí
-
+        # --- Timers de flash y shake ---
         if self.flash_timer > 0:
             self.flash_timer -= dt
+            if self.flash_timer < 0:
+                self.flash_timer = 0
 
-        # --- actualizar screen shake ---
         if self.shake_timer > 0:
             self.shake_timer -= dt
             if self.shake_timer < 0:
                 self.shake_timer = 0
+
+    def check_boss_status(self, dt: float):
+            """Detecta cuándo el Diablo muere y lanza la victoria tras 3s."""
+
+            # Si estamos en combate con el jefe, ver si sigue vivo
+            if self.boss_active:
+                boss_alive = any(
+                    isinstance(e, BossDiablo) and e.alive
+                    for e in self.enemies
+                )
+                if not boss_alive:
+                    # Terminó la animación de muerte del jefe
+                    self.boss_active = False
+                    self.victory_pending = True
+                    self.victory_timer = 0.0
+                    self.stop_music()   # parar música de la pelea
+
+            # Si estamos esperando la pantalla de victoria
+            if self.victory_pending:
+                self.victory_timer += dt
+                if self.victory_timer >= 1.5:
+                    self.victory_pending = False
+                    self.save_current_run_summary()
+                    self.state = GameState.VICTORY
+
 
 
 
 
     def handle_enemy_collisions(self):
         """
-        Evita que jugador y enemigos se atraviesen:
-        - Si hay colisión, se corrige empujando al JUGADOR fuera del enemigo.
-        - Los enemigos normales pegados pasan a animación IDLE.
-        - NO se cambia el estado de enemigos que estén muertos (state == "death").
+        - Enemigos no atraviesan al jugador.
+        - Enemigos no atraviesan a otros enemigos.
+        - No empujan al jugador: solo se recolocan ellos.
+        - Compatible con Enemy y BossDiablo (sin usar _rect).
         """
-        import pygame
-        from entities.enemy import Enemy, EnemyState
 
-        # Hitbox del jugador
-        player_rect = pygame.Rect(
+        # --- Hitbox del jugador ---
+        player_hitbox = pygame.Rect(
             self.player.x + self.player.hitbox_offset_x,
             self.player.y + self.player.hitbox_offset_y,
             self.player.hitbox_width,
             self.player.hitbox_height,
         )
 
+        # --- ENEMIGO ↔ JUGADOR ---
         for enemy in self.enemies:
             if not enemy.alive:
                 continue
 
-            # 👇 si el enemigo tiene estado y está en muerte, lo ignoramos
-            enemy_state = getattr(enemy, "state", None)
-            if enemy_state == "death":
+            e_hit = enemy.rect  # usar propiedad rect SIEMPRE
+
+            if e_hit.colliderect(player_hitbox):
+
+                # Dejar quieto a enemigos “normales” (NO al Diablo muerto)
+                if hasattr(enemy, "set_state") and enemy.state != "death":
+                    enemy.set_state("idle")
+
+                # Separar enemigo del jugador (1 px hasta no chocar)
+                while e_hit.colliderect(player_hitbox):
+
+                    dx = e_hit.centerx - player_hitbox.centerx
+                    dy = e_hit.centery - player_hitbox.centery
+
+                    if abs(dx) > abs(dy):
+                        step_x = 1 if dx > 0 else -1
+                        enemy.x += step_x
+                    else:
+                        step_y = 1 if dy > 0 else -1
+                        enemy.y += step_y
+
+                    # actualizar hitbox
+                    e_hit = enemy.rect
+
+        # --- ENEMIGO ↔ ENEMIGO ---
+        n = len(self.enemies)
+        for i in range(n):
+            e1 = self.enemies[i]
+            if not e1.alive:
                 continue
 
-            enemy_rect = enemy.rect
+            r1 = e1.rect
 
-            if not player_rect.colliderect(enemy_rect):
-                continue
+            for j in range(i + 1, n):
+                e2 = self.enemies[j]
+                if not e2.alive:
+                    continue
 
-            # --- Enemigo pegado al jugador ---
-            # Solo ponemos en IDLE a enemigos NORMALES (orcos), nunca al boss.
-            if isinstance(enemy, Enemy):
-                # y además solo si no está atacando
-                if enemy_state not in (EnemyState.ATTACK, EnemyState.HURT, EnemyState.DEATH):
-                    enemy._set_animation_for(EnemyState.IDLE)
+                r2 = e2.rect
 
-            # Vector desde enemigo hacia jugador
-            dx = player_rect.centerx - enemy_rect.centerx
-            dy = player_rect.centery - enemy_rect.centery
+                if not r1.colliderect(r2):
+                    continue
 
-            # Solapamiento en X
-            if dx > 0:
-                overlap_x = enemy_rect.right - player_rect.left
-            else:
-                overlap_x = player_rect.right - enemy_rect.left
+                # Separar ambos en direcciones opuestas
+                while r1.colliderect(r2):
 
-            # Solapamiento en Y
-            if dy > 0:
-                overlap_y = enemy_rect.bottom - player_rect.top
-            else:
-                overlap_y = player_rect.bottom - enemy_rect.top
+                    dx = r2.centerx - r1.centerx
+                    dy = r2.centery - r1.centery
 
-            if overlap_x <= 0 or overlap_y <= 0:
-                continue
+                    if abs(dx) > abs(dy):
+                        step1_x = -1 if dx > 0 else 1
+                        step2_x = -step1_x
 
-            # Empujamos SOLO al jugador fuera del enemigo
-            if overlap_x < overlap_y:
-                # mover jugador en X
-                if dx > 0:
-                    self.player.x += overlap_x
-                else:
-                    self.player.x -= overlap_x
-            else:
-                # mover jugador en Y
-                if dy > 0:
-                    self.player.y += overlap_y
-                else:
-                    self.player.y -= overlap_y
+                        e1.x += step1_x
+                        e2.x += step2_x
+                    else:
+                        step1_y = -1 if dy > 0 else 1
+                        step2_y = -step1_y
 
-            # actualizar rect del jugador tras moverlo
-            player_rect.x = int(self.player.x + self.player.hitbox_offset_x)
-            player_rect.y = int(self.player.y + self.player.hitbox_offset_y)
+                        e1.y += step1_y
+                        e2.y += step2_y
+
+                    # actualizar hitboxes
+                    r1 = e1.rect
+                    r2 = e2.rect
 
 
     def handle_player_attack_collisions(self):
@@ -467,6 +615,24 @@ class Game:
                     MAX_BANDAGES
                 )
 
+    def handle_item_collection(self):
+        """Detecta si el jugador recoge un ítem."""
+        player_rect = pygame.Rect(
+            self.player.x + self.player.hitbox_offset_x,
+            self.player.y + self.player.hitbox_offset_y,
+            self.player.hitbox_width,
+            self.player.hitbox_height,
+        )
+        
+        for item in self.items[:]:  # copiar lista para poder modificarla
+            if item.collected:
+                continue
+            
+            if player_rect.colliderect(item.rect):
+                if item.collect(self.player):
+                    print(f"[GAME] ¡{self.player.__class__.__name__} recogió {item.item_type}!")
+                    # Opcional: agregar efecto visual/sonido aquí
+                self.items.remove(item)
 
 
     def give_xp_to_player(self, amount: int):
@@ -504,7 +670,7 @@ class Game:
         from core.settings import MAP_WIDTH_PX, MAP_HEIGHT_PX, TILE_SIZE
 
         # Si estamos en combate con el jefe, NO spawneamos más orcos
-        if self.boss_active:
+        if self.boss_active or self.boss_spawned:
             return
         
         # Si ya hay muchos enemigos, no spawnear más
@@ -538,10 +704,8 @@ class Game:
         health = int(ENEMY_BASE_HEALTH * (ENEMY_HEALTH_GROWTH ** level_index))
         damage = ENEMY_BASE_DAMAGE * (ENEMY_DAMAGE_GROWTH ** level_index)
 
-        enemy = Enemy(x, y, health=health, damage=damage)
+        enemy = Enemy(x, y, health=health, damage=damage, sound_manager=self.sound_manager)
         self.enemies.append(enemy)
-
-
 
 
 
@@ -554,7 +718,7 @@ class Game:
         self.level = self.player.level
 
         # Si llegamos al nivel del jefe, lo spawneamos
-        if self.level == 6 and not self.boss_spawned:
+        if self.level == 13 and not self.boss_spawned:
             self.spawn_boss_diablo()
 
         # Spawn más rápido (como ya tenías)
@@ -568,6 +732,9 @@ class Game:
 
         # Bonus de score por subir
         self.score += 50
+        # Spawnear nuevo aguardiente al subir de nivel
+        self.item_spawned_this_level = False
+        self.spawn_aguardiente_item()
 
     def apply_stat_upgrade(self, stat_key: str):
         from core.settings import PLAYER_STAT_MAX_LEVEL
@@ -656,6 +823,8 @@ class Game:
                 self.draw_pause_menu()
         elif self.state == GameState.GAME_OVER:
             self.draw_game_over()
+        elif self.state == GameState.VICTORY:
+            self.draw_victory()
 
         pygame.display.flip()
 
@@ -701,7 +870,20 @@ class Game:
 
     def draw_game(self):
 
+        # Offset base de la cámara
         camera_offset = self.camera.get_offset()
+
+        # Temblor de cámara
+        shake_x = 0
+        shake_y = 0
+        if self.shake_timer > 0:
+            shake_x = random.randint(-self.shake_strength, self.shake_strength)
+            shake_y = random.randint(-self.shake_strength, self.shake_strength)
+
+        camera_offset = (
+            camera_offset[0] + shake_x,
+            camera_offset[1] + shake_y,
+        )
 
         # 1) Mapa
         self.tile_map.draw(self.screen, camera_offset)
@@ -790,6 +972,30 @@ class Game:
                 # Dibujar sprite del jugador
                 self.screen.blit(image_to_draw, player_pos)
 
+                # --- Efecto de inmunidad ---
+                if obj.is_immune:
+                    # Aura dorada pulsante
+                    center_x = player_pos[0] + obj.width // 2
+                    center_y = player_pos[1] + obj.height // 2
+                    
+                    t = pygame.time.get_ticks() / 1000.0
+                    radius = int(obj.width * 0.8 + 5 * math.sin(t * 5))
+                    alpha = int(150 + 80 * math.sin(t * 8))
+                    
+                    immune_surface = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+                    pygame.draw.circle(
+                        immune_surface,
+                        (255, 215, 0, alpha),
+                        (radius, radius),
+                        radius,
+                        4
+                    )
+                    
+                    self.screen.blit(
+                        immune_surface,
+                        (center_x - radius, center_y - radius)
+                    )
+
                 # --- Aura de especial listo ---
                 if special_ready:
                     # centro cerca de los pies del jugador
@@ -856,13 +1062,16 @@ class Game:
                     )
                     self.screen.blit(swing_img, swing_pos)
 
+        # Dibujar ítems (siempre encima del suelo, debajo de entidades)
+        for item in self.items:
+            item.draw(self.screen, camera_offset)
         # 4) UI siempre encima
         self.draw_ui()
 
         # Efectos visuales de habilidades especiales por encima de entidades
         self.draw_special_effects(camera_offset)
 
-        self.minimap.draw(self.screen, self.player, self.enemies)
+        self.minimap.draw(self.screen, self.player, self.enemies, self.items)
 
         if self.flash_timer > 0:
             alpha = int(255 * (self.flash_timer / 0.15))
@@ -870,24 +1079,6 @@ class Game:
             flash_surface.set_alpha(alpha)
             flash_surface.fill((255, 255, 255))
             self.screen.blit(flash_surface, (0, 0))
-
-            # offset base de cámara (sin temblor)
-            camera_offset = self.camera.get_offset()
-
-            shake_x = 0
-            shake_y = 0
-            if self.shake_timer > 0:
-                shake_x = random.randint(-self.shake_strength, self.shake_strength)
-                shake_y = random.randint(-self.shake_strength, self.shake_strength)
-
-            # offset final con temblor
-            camera_offset = (
-                camera_offset[0] + shake_x,
-                camera_offset[1] + shake_y,
-            )
-
-            # 1) Mapa
-            self.tile_map.draw(self.screen, camera_offset)
 
 
 
@@ -948,6 +1139,28 @@ class Game:
             txt_bandages,
             (margin, margin + bar_height + 8 + txt_level.get_height() + txt_score.get_height() + txt_xp.get_height())
         )
+        # Indicador de inmunidad
+        if self.player.is_immune:
+            time_left = self.player.immunity_duration - self.player.immunity_timer
+            
+            # Texto parpadeante
+            t = pygame.time.get_ticks() // 150
+            if t % 2 == 0:
+                color = (255, 215, 0)  # Dorado
+            else:
+                color = (255, 255, 150)  # Amarillo claro
+            
+            txt_immune = font.render(
+                f"¡INMUNE! {time_left:.1f}s",
+                True,
+                color
+            )
+            
+            # Posición centrada arriba
+            self.screen.blit(
+                txt_immune,
+                (SCREEN_WIDTH // 2 - txt_immune.get_width() // 2, 20)
+            )
 
         # Contador especial
         from core.settings import SPECIAL_FRONTAL_KILLS, SPECIAL_SPIRAL_KILLS
@@ -1033,6 +1246,15 @@ class Game:
 
 
     def draw_menu(self):
+        if getattr(self, "menu_background", None) is not None:
+            bg = pygame.transform.scale(
+                self.menu_background,
+                (SCREEN_WIDTH, SCREEN_HEIGTH)
+            )
+            self.screen.blit(bg, (0, 0))
+        else:
+            self.screen.fill(COLOR_BG)
+
         font = pygame.font.SysFont("arial", 32, bold=True)
         hint_font = pygame.font.SysFont("arial", 20)
 
@@ -1357,10 +1579,39 @@ class Game:
 
         try:
             pygame.mixer.music.load(music_path)
-            pygame.mixer.music.set_volume(0.8)
+            pygame.mixer.music.set_volume(0.07)
             pygame.mixer.music.play(-1)  # loop infinito
         except pygame.error as e:
             print("Error cargando música del jefe:", e)
+
+    def stop_music(self):
+        """Detiene cualquier música que esté sonando."""
+        try:
+            pygame.mixer.music.stop()
+        except pygame.error:
+            pass
+
+    def start_normal_music(self):
+        """Reproduce una canción aleatoria (no repite la misma dos veces seguidas)."""
+
+        if not self.normal_music_tracks:
+            return
+
+        choices = list(range(len(self.normal_music_tracks)))
+        if self.last_music_index in choices and len(choices) > 1:
+            choices.remove(self.last_music_index)
+
+        index = random.choice(choices)
+        path = self.normal_music_tracks[index]
+
+        try:
+            pygame.mixer.music.load(path)
+            pygame.mixer.music.set_volume(0.02)
+            pygame.mixer.music.play(-1)   # loop
+            self.last_music_index = index
+        except pygame.error as e:
+            print("Error cargando música normal:", e)
+
 
     def spawn_boss_diablo(self):
         """Invoca al jefe Diablo y prepara el combate."""
@@ -1376,11 +1627,39 @@ class Game:
         # Posicionar al jefe cerca del centro del mapa
         boss_x = self.player.x + 150
         boss_y = self.player.y - 100
-        boss = BossDiablo(boss_x, boss_y)
+        boss = BossDiablo(boss_x, boss_y, sound_manager=self.sound_manager)
         self.enemies.append(boss)
 
+        # Rugido al aparecer
+        self.sound_manager.play("diablo_roar")
+
         # Música del jefe
+        self.stop_music()
         self.start_boss_music()
+    
+    def draw_victory(self):
+
+        font_big = pygame.font.SysFont("arial", 48, bold=True)
+        font_small = pygame.font.SysFont("arial", 24)
+
+        time_text = self.format_time(int(self.run_time))
+
+        text_title = font_big.render("¡VICTORIA!", True, (255, 215, 0))
+        text_score = font_small.render(f"Puntuación: {self.score}", True, (230, 230, 230))
+        text_kills = font_small.render(f"Enemigos derrotados: {self.kills}", True, (230, 230, 230))
+        text_level = font_small.render(f"Nivel alcanzado: {self.level}", True, (230, 230, 230))
+        text_time = font_small.render(f"Tiempo de juego: {time_text}", True, (230, 230, 230))
+        text_hint = font_small.render("ENTER: Reiniciar  |  M: Menú  |  ESC: Salir", True, (200, 200, 200))
+
+        cx = SCREEN_WIDTH // 2
+        cy = SCREEN_HEIGTH // 2
+
+        self.screen.blit(text_title, (cx - text_title.get_width() // 2, cy - 120))
+        self.screen.blit(text_score, (cx - text_score.get_width() // 2, cy - 50))
+        self.screen.blit(text_kills, (cx - text_kills.get_width() // 2, cy - 20))
+        self.screen.blit(text_level, (cx - text_level.get_width() // 2, cy + 10))
+        self.screen.blit(text_time, (cx - text_time.get_width() // 2, cy + 40))
+        self.screen.blit(text_hint, (cx - text_hint.get_width() // 2, cy + 90))
 
 
 

@@ -32,6 +32,7 @@ class Minimap:
         self.player_color = (0, 255, 0, 255)  # Verde para jugador
         self.enemy_color = (255, 50, 50, 255)  # Rojo para enemigos
         self.boss_color = (255, 150, 0, 255)  # Naranja para jefe
+        self.item_color = (255, 215, 0, 255)  # Dorado para ítems
         
     def world_to_minimap(self, world_x, world_y):
         """Convierte coordenadas del mundo a coordenadas del minimapa."""
@@ -39,7 +40,7 @@ class Minimap:
         mini_y = int(world_y * self.scale_y)
         return mini_x, mini_y
     
-    def draw(self, screen, player, enemies):
+    def draw(self, screen, player, enemies, items=None):
         """
         Dibuja el minimapa en la pantalla.
         
@@ -81,6 +82,36 @@ class Minimap:
                 (mini_x, mini_y),
                 size
             )
+        # Dibujar ítems (antes del jugador para que quede debajo)
+        if items:
+            for item in items:
+                if item.collected:
+                    continue
+                
+                # Posición del ítem en el minimapa
+                item_x = item.x + item.width // 2
+                item_y = item.y + item.height // 2
+                mini_x, mini_y = self.world_to_minimap(item_x, item_y)
+                
+                # Dibujar punto del ítem con efecto pulsante
+                import math
+                pulse = math.sin(pygame.time.get_ticks() / 300.0)
+                size = int(4 + pulse * 1.5)  # tamaño entre 2.5 y 5.5
+                
+                # Borde negro
+                pygame.draw.circle(
+                    self.surface,
+                    (0, 0, 0, 255),
+                    (mini_x, mini_y),
+                    size + 1
+                )
+                # Centro dorado
+                pygame.draw.circle(
+                    self.surface,
+                    self.item_color,
+                    (mini_x, mini_y),
+                    size
+                )
         
         # Dibujar jugador
         player_x = player.x + player.width // 2
