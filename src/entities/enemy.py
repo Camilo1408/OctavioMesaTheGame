@@ -32,6 +32,7 @@ class Enemy(Entity):
         enemy_type: str | None = None,
         health: float | None = None,
         damage: float | None = None,
+        sound_manager = None
     ):
         # Tipo de enemigo (orc1, orc2, orc3)
         if enemy_type is None:
@@ -44,6 +45,8 @@ class Enemy(Entity):
         # Vida y daño
         self.health = health if health is not None else ENEMY_BASE_HEALTH
         self.damage = damage if damage is not None else 10
+
+        self.sound_manager = sound_manager
 
         # Variación ligera de velocidad
         self.speed_variation = random.uniform(0.9, 1.1)
@@ -289,8 +292,14 @@ class Enemy(Entity):
         if self.health <= 0:
             self.health = 0
             self._set_animation_for(EnemyState.DEATH)
+            # Sonido de muerte
+            if self.sound_manager:
+                self.sound_manager.play("orc_death")
         else:
             self._set_animation_for(EnemyState.HURT)
+            # Sonido de daño
+            if self.sound_manager:
+                self.sound_manager.play("orc_hurt")
 
     def _start_attack(self):
         self._set_animation_for(EnemyState.ATTACK)
@@ -383,6 +392,9 @@ class Enemy(Entity):
 
             # Solo pegamos una vez, en la mitad de la animación
             if not self.attack_executed and self.current_frame_index >= mid_index:
+                # Sonido de ataque del orco
+                if self.sound_manager:
+                    self.sound_manager.play("orc_attack")
 
                 atk_rect = self.get_attack_hitbox()
 

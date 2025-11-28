@@ -16,6 +16,7 @@ from core.settings import (
     SPECIAL_SPIRAL_DAMAGE, SPECIAL_RADIUS, XP_PER_KILL, SPECIAL_FRONTAL_KILLS,SPECIAL_SPIRAL_KILLS
 )
 from core.minimapa import Minimap
+from core.sound_manager import SoundManager
 import math, os, random
 from entities.boss_diablo import BossDiablo
 
@@ -53,6 +54,7 @@ class Game:
         self.spawn_interval = ENEMY_INITIAL_SPAWN_INTERVAL
         self.max_enemies_on_screen = ENEMY_MAX_ON_SCREEN_BASE
 
+        self.sound_manager = SoundManager()
 
         # Create game objects
         # Configure player to use 8 frames per direction and 1-based row indexing
@@ -60,7 +62,8 @@ class Game:
                             frames_per_direction=8,
                             unarmed_row=39,
                             armed_row=9,
-                            row_index_base=1)
+                            row_index_base=1,
+                            sound_manager=self.sound_manager)
         
         self.level = self.player.level  # sincronizar nivel del juego con nivel del jugador
 
@@ -97,16 +100,13 @@ class Game:
         self.flash_timer = 0.0
         self.shake_timer = 0.0
         self.shake_strength = 0
-
-                    # === CARGA DE SONIDOS ===
+        
+        # Cargar sonidos de habilidades especiales
         sound_path = os.path.join(os.path.dirname(__file__), "..", "assets", "sounds")
-
         self.snd_slash_q = pygame.mixer.Sound(os.path.join(sound_path, "Slash.mp3"))
         self.snd_slash_d = pygame.mixer.Sound(os.path.join(sound_path, "SlashD.mp3"))
         self.snd_explosion_e = pygame.mixer.Sound(os.path.join(sound_path, "Explosion.mp3"))
         self.snd_whoosh = pygame.mixer.Sound(os.path.join(sound_path, "Woosh.mp3"))
-
-        # Ajustar volumen si deseas
         self.snd_slash_q.set_volume(0.7)
         self.snd_slash_d.set_volume(0.7)
         self.snd_explosion_e.set_volume(0.8)
@@ -230,7 +230,7 @@ class Game:
             health = int(ENEMY_BASE_HEALTH * (ENEMY_HEALTH_GROWTH ** level_index))
             damage = ENEMY_BASE_DAMAGE * (ENEMY_DAMAGE_GROWTH ** level_index)
 
-            enemy = Enemy(x, y, health=health, damage=damage)
+            enemy = Enemy(x, y, health=health, damage=damage, sound_manager=self.sound_manager)
             self.enemies.append(enemy) 
 
 
@@ -538,7 +538,7 @@ class Game:
         health = int(ENEMY_BASE_HEALTH * (ENEMY_HEALTH_GROWTH ** level_index))
         damage = ENEMY_BASE_DAMAGE * (ENEMY_DAMAGE_GROWTH ** level_index)
 
-        enemy = Enemy(x, y, health=health, damage=damage)
+        enemy = Enemy(x, y, health=health, damage=damage, sound_manager=self.sound_manager)
         self.enemies.append(enemy)
 
 
@@ -1376,8 +1376,11 @@ class Game:
         # Posicionar al jefe cerca del centro del mapa
         boss_x = self.player.x + 150
         boss_y = self.player.y - 100
-        boss = BossDiablo(boss_x, boss_y)
+        boss = BossDiablo(boss_x, boss_y, sound_manager=self.sound_manager)
         self.enemies.append(boss)
+
+        # Rugido al aparecer
+        self.sound_manager.play("diablo_roar")
 
         # Música del jefe
         self.start_boss_music()

@@ -6,7 +6,7 @@ from core.settings import MAP_WIDTH_PX, MAP_HEIGHT_PX, PLAYER_MAX_HEALTH, BANDAG
 
 
 class Player:
-    def __init__(self, x, y, sprite_path=None, sprite_size=64, unarmed_row=39, armed_row=10, frames_per_direction=None, row_index_base=0):
+    def __init__(self, x, y, sprite_path=None, sprite_size=64, unarmed_row=39, armed_row=10, frames_per_direction=None, row_index_base=0, sound_manager=None):
         """Player with configurable sprite sheet layout."""
         self.max_health = PLAYER_MAX_HEALTH
         self.health = self.max_health
@@ -45,9 +45,8 @@ class Player:
         self.death_animation_speed = 0.10
         self.death_animation_timer = 0.0
 
-        sound_path = os.path.join(os.path.dirname(__file__), "..", "assets", "sounds")
-        self.snd_slash_o = pygame.mixer.Sound(os.path.join(sound_path, "SlashO.mp3"))
-        self.snd_slash_o.set_volume(0.7)
+        # Gestor de sonidos
+        self.sound_manager = sound_manager
 
 
 
@@ -328,7 +327,8 @@ class Player:
         self.attack_timer = 0.0
         self.animation_frame = 0
 
-        self.snd_slash_o.play()
+        if self.sound_manager:
+            self.sound_manager.play("octavio_attack")        
 
         # Usamos la dirección actual de mirada
         self.current_animation = f'attack_{self.facing}'
@@ -702,23 +702,6 @@ class Player:
         from core.settings import SPECIAL_SPIRAL_KILLS
         return self.special_kill_counter >= SPECIAL_SPIRAL_KILLS
 
-
-    def take_damage(self, amount: float):
-        """Aplica daño al jugador, lanzando animación de daño o muerte."""
-        # Si ya está en animación de muerte, ignoramos más daño
-        if self.is_dying:
-            return
-
-        # Aplicar modificador de resistencia
-        effective_damage = amount * getattr(self, "damage_taken_multiplier", 1.0)
-        self.health -= effective_damage
-
-        if self.health <= 0:
-            self.health = 0
-            self.start_death_animation()
-        else:
-            self.start_hurt_animation()
-
     def start_hurt_animation(self):
         """Activa una breve animación de daño (parpadeo/pose de golpe)."""
         # Si ya se está muriendo, no tiene sentido mostrar hurt
@@ -726,6 +709,8 @@ class Player:
             return
         self.is_hurt = True
         self.hurt_timer = 0.0
+        if self.sound_manager:
+            self.sound_manager.play("octavio_hurt")
 
     def start_death_animation(self):
         """Inicia la animación de muerte del jugador."""
@@ -741,6 +726,8 @@ class Player:
         frames = self.death_animations.get(self.facing, [])
         if frames:
             self.image = frames[0]
+            if self.sound_manager:
+                self.sound_manager.play("octavio_death")
 
     def get_swing_base_image(self):
         """Devuelve la imagen base del swing para que el Game la use en especiales."""
