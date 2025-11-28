@@ -17,6 +17,7 @@ from core.settings import (
 )
 from core.minimapa import Minimap
 from core.sound_manager import SoundManager
+from entities.item import Item
 import math, os, random
 from entities.boss_diablo import BossDiablo
 
@@ -97,6 +98,10 @@ class Game:
         # Enemigos se crean cuando realmente empieza la partida
         # sincronizar nivel del juego con nivel del jugador
 
+        # ---- Ítems ----
+        self.items = []  # lista de ítems en el mapa
+        self.item_spawned_this_level = False  # bandera para spawnar 1 por nivel
+
         self.flash_timer = 0.0
         self.shake_timer = 0.0
         self.shake_strength = 0
@@ -168,6 +173,11 @@ class Game:
         # --- Reset completo de enemigos y spawns ---
         # eliminar TODOS los enemigos de la partida anterior
         self.enemies = []
+
+        # Reset de ítems
+        self.items = []
+        self.item_spawned_this_level = False
+
         # reiniciar el temporizador de spawn
         self.spawn_timer = 0.0
 
@@ -202,6 +212,8 @@ class Game:
         self.state = GameState.RUNNING
         # Si quieres, puedes spawnear algunos al inicio:
         self.spawn_initial_enemies(count=5)
+        # Spawnear ítem de aguardiente
+        self.spawn_aguardiente_item()
 
 
 
@@ -233,7 +245,31 @@ class Game:
             enemy = Enemy(x, y, health=health, damage=damage, sound_manager=self.sound_manager)
             self.enemies.append(enemy) 
 
-
+    def spawn_aguardiente_item(self):
+        """Spawnea un ítem de aguardiente en posición aleatoria."""
+        if self.item_spawned_this_level:
+            return
+        
+        import random
+        from core.settings import MAP_WIDTH_PX, MAP_HEIGHT_PX, TILE_SIZE
+        
+        # Posición aleatoria lejos del jugador
+        while True:
+            x = random.randint(TILE_SIZE * 5, MAP_WIDTH_PX - TILE_SIZE * 5)
+            y = random.randint(TILE_SIZE * 5, MAP_HEIGHT_PX - TILE_SIZE * 5)
+            
+            dx = x - self.player.x
+            dy = y - self.player.y
+            dist = math.sqrt(dx * dx + dy * dy)
+            
+            # Al menos 300 píxeles de distancia del jugador
+            if dist > 300:
+                break
+        
+        item = Item(x, y, item_type="aguardiente")
+        self.items.append(item)
+        self.item_spawned_this_level = True
+        print(f"[GAME] Aguardiente spawneado en ({x}, {y})")
 
     def handle_events(self):
         for event in pygame.event.get():
@@ -308,6 +344,12 @@ class Game:
         self.handle_enemy_collisions()
         self.handle_player_attack_collisions()
         self.update_enemy_spawning(dt)
+        # Actualizar ítems
+        for item in self.items:
+            item.update(dt)
+
+        # Detectar colisión con ítems
+        self.handle_item_collection()
 
         # Actualizar efectos visuales de habilidades especiales
         self.update_special_effects(dt)
@@ -467,6 +509,24 @@ class Game:
                     MAX_BANDAGES
                 )
 
+    def handle_item_collection(self):
+        """Detecta si el jugador recoge un ítem."""
+        player_rect = pygame.Rect(
+            self.player.x + self.player.hitbox_offset_x,
+            self.player.y + self.player.hitbox_offset_y,
+            self.player.hitbox_width,
+            self.player.hitbox_height,
+        )
+        
+        for item in self.items[:]:  # copiar lista para poder modificarla
+            if item.collected:
+                continue
+            
+            if player_rect.colliderect(item.rect):
+                if item.collect(self.player):
+                    print(f"[GAME] ¡{self.player.__class__.__name__} recogió {item.item_type}!")
+                    # Opcional: agregar efecto visual/sonido aquí
+                self.items.remove(item)
 
 
     def give_xp_to_player(self, amount: int):
@@ -568,6 +628,9 @@ class Game:
 
         # Bonus de score por subir
         self.score += 50
+        # Spawnear nuevo aguardiente al subir de nivel
+        self.item_spawned_this_level = False
+        self.spawn_aguardiente_item()
 
     def apply_stat_upgrade(self, stat_key: str):
         from core.settings import PLAYER_STAT_MAX_LEVEL
@@ -790,6 +853,30 @@ class Game:
                 # Dibujar sprite del jugador
                 self.screen.blit(image_to_draw, player_pos)
 
+                # --- Efecto de inmunidad ---
+                if obj.is_immune:
+                    # Aura dorada pulsante
+                    center_x = player_pos[0] + obj.width // 2
+                    center_y = player_pos[1] + obj.height // 2
+                    
+                    t = pygame.time.get_ticks() / 1000.0
+                    radius = int(obj.width * 0.8 + 5 * math.sin(t * 5))
+                    alpha = int(150 + 80 * math.sin(t * 8))
+                    
+                    immune_surface = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+                    pygame.draw.circle(
+                        immune_surface,
+                        (255, 215, 0, alpha),
+                        (radius, radius),
+                        radius,
+                        4
+                    )
+                    
+                    self.screen.blit(
+                        immune_surface,
+                        (center_x - radius, center_y - radius)
+                    )
+
                 # --- Aura de especial listo ---
                 if special_ready:
                     # centro cerca de los pies del jugador
@@ -856,13 +943,16 @@ class Game:
                     )
                     self.screen.blit(swing_img, swing_pos)
 
+        # Dibujar ítems (siempre encima del suelo, debajo de entidades)
+        for item in self.items:
+            item.draw(self.screen, camera_offset)
         # 4) UI siempre encima
         self.draw_ui()
 
         # Efectos visuales de habilidades especiales por encima de entidades
         self.draw_special_effects(camera_offset)
 
-        self.minimap.draw(self.screen, self.player, self.enemies)
+        self.minimap.draw(self.screen, self.player, self.enemies, self.items)
 
         if self.flash_timer > 0:
             alpha = int(255 * (self.flash_timer / 0.15))
@@ -948,6 +1038,28 @@ class Game:
             txt_bandages,
             (margin, margin + bar_height + 8 + txt_level.get_height() + txt_score.get_height() + txt_xp.get_height())
         )
+        # Indicador de inmunidad
+        if self.player.is_immune:
+            time_left = self.player.immunity_duration - self.player.immunity_timer
+            
+            # Texto parpadeante
+            t = pygame.time.get_ticks() // 150
+            if t % 2 == 0:
+                color = (255, 215, 0)  # Dorado
+            else:
+                color = (255, 255, 150)  # Amarillo claro
+            
+            txt_immune = font.render(
+                f"¡INMUNE! {time_left:.1f}s",
+                True,
+                color
+            )
+            
+            # Posición centrada arriba
+            self.screen.blit(
+                txt_immune,
+                (SCREEN_WIDTH // 2 - txt_immune.get_width() // 2, 20)
+            )
 
         # Contador especial
         from core.settings import SPECIAL_FRONTAL_KILLS, SPECIAL_SPIRAL_KILLS

@@ -23,6 +23,11 @@ class Player:
         # --- Sprint 4: contador de bajas para habilidades especiales ---
         self.special_kill_counter = 0
 
+        # --- Sistema de inmunidad ---
+        self.is_immune = False
+        self.immunity_timer = 0.0
+        self.immunity_duration = 0.0
+
         self.x = x
         self.y = y
         self.width = sprite_size
@@ -356,7 +361,15 @@ class Player:
 
             return  # no se mueve ni ataca durante la muerte
         
-            # 2) Animación de daño (hurt) sencilla: pequeño “stun” muy corto
+        # --- Actualizar inmunidad ---
+        if self.is_immune:
+            self.immunity_timer += dt
+            if self.immunity_timer >= self.immunity_duration:
+                self.is_immune = False
+                self.immunity_timer = 0.0
+                print("[PLAYER] Inmunidad terminada")
+
+        # 2) Animación de daño (hurt) sencilla: pequeño “stun” muy corto
         # --- Actualizar efecto de daño (hurt flash) ---
         if self.is_hurt:
             self.hurt_timer -= dt
@@ -662,6 +675,15 @@ class Player:
     def take_damage(self, amount: float):
         """Aplica daño al jugador y activa el efecto de daño (hurt flash)."""
         # Si el daño es cero o negativo, no hacemos nada
+
+        # Si está inmune, no recibe daño
+        if self.is_immune:
+            return
+        
+        # Si ya está en animación de muerte, ignoramos más daño
+        if self.is_dying:
+            return
+
         if amount <= 0:
             return
 
@@ -761,4 +783,11 @@ class Player:
                 x = col * frame_width
                 frame = sheet.subsurface((x, y, frame_width, frame_height))
                 self.swing_frames[direction].append(frame)
+    
+    def activate_immunity(self, duration=10.0):
+        """Activa inmunidad temporal."""
+        self.is_immune = True
+        self.immunity_timer = 0.0
+        self.immunity_duration = duration
+        print(f"[PLAYER] ¡Inmunidad activada por {duration} segundos!")
 
