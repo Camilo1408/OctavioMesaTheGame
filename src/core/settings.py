@@ -70,7 +70,7 @@ ENEMY_SPRITES = {
     },
 }
 
-# --- Armas jugador ---
+# --- Armas jugador ---1
 FIST_BASE_DAMAGE = 10
 MACHETE_BASE_DAMAGE = 17.5
 

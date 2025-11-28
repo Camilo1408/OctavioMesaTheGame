@@ -45,7 +45,7 @@ class BossDiablo(Entity):
         self.damage = 2.5  # se usa como "multiplicador" sobre el daño base del enemigo normal si quieres
 
         self.attack_range = ENEMY_ATTACK_RANGE * 1.4
-        self.attack_cooldown = 2.0  # segundos entre ataques (lo que pediste)
+        self.attack_cooldown = 1.2  # segundos entre ataques (lo que pediste)
         self.last_attack_time = 0.0
         self.attack_executed = False
 

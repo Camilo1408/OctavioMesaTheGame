@@ -608,7 +608,7 @@ class Game:
         from core.settings import MAP_WIDTH_PX, MAP_HEIGHT_PX, TILE_SIZE
 
         # Si estamos en combate con el jefe, NO spawneamos más orcos
-        if self.boss_active:
+        if self.boss_active or self.boss_spawned:
             return
         
         # Si ya hay muchos enemigos, no spawnear más
@@ -644,8 +644,6 @@ class Game:
 
         enemy = Enemy(x, y, health=health, damage=damage)
         self.enemies.append(enemy)
-
-
 
 
 
