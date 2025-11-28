@@ -3,7 +3,7 @@ import sys
 from entities.player import Player
 from core.camera import Camera
 from core.map import TileMap
-from entities.enemy import Enemy
+from entities.enemy import Enemy, EnemyState
 from core.game_state import GameState
 from core.settings import (
     SCREEN_HEIGTH, SCREEN_WIDTH, FPS, WINDOW_TITLE, COLOR_BG,
@@ -329,11 +329,80 @@ class Game:
 
     def handle_enemy_collisions(self):
         """
-        Por ahora no hacemos daño por contacto.
-        El daño de los enemigos se calcula en Enemy.update() usando su campo de ataque.
-        Aquí podrías manejar solo empujones/colisiones físicas si lo quieres más adelante.
+        Evita que jugador y enemigos se atraviesen:
+        - Si hay colisión, se corrige empujando al JUGADOR fuera del enemigo.
+        - Los enemigos normales pegados pasan a animación IDLE.
+        - NO se cambia el estado de enemigos que estén muertos (state == "death").
         """
-        return
+        import pygame
+        from entities.enemy import Enemy, EnemyState
+
+        # Hitbox del jugador
+        player_rect = pygame.Rect(
+            self.player.x + self.player.hitbox_offset_x,
+            self.player.y + self.player.hitbox_offset_y,
+            self.player.hitbox_width,
+            self.player.hitbox_height,
+        )
+
+        for enemy in self.enemies:
+            if not enemy.alive:
+                continue
+
+            # 👇 si el enemigo tiene estado y está en muerte, lo ignoramos
+            enemy_state = getattr(enemy, "state", None)
+            if enemy_state == "death":
+                continue
+
+            enemy_rect = enemy.rect
+
+            if not player_rect.colliderect(enemy_rect):
+                continue
+
+            # --- Enemigo pegado al jugador ---
+            # Solo ponemos en IDLE a enemigos NORMALES (orcos), nunca al boss.
+            if isinstance(enemy, Enemy):
+                # y además solo si no está atacando
+                if enemy_state not in (EnemyState.ATTACK, EnemyState.HURT, EnemyState.DEATH):
+                    enemy._set_animation_for(EnemyState.IDLE)
+
+            # Vector desde enemigo hacia jugador
+            dx = player_rect.centerx - enemy_rect.centerx
+            dy = player_rect.centery - enemy_rect.centery
+
+            # Solapamiento en X
+            if dx > 0:
+                overlap_x = enemy_rect.right - player_rect.left
+            else:
+                overlap_x = player_rect.right - enemy_rect.left
+
+            # Solapamiento en Y
+            if dy > 0:
+                overlap_y = enemy_rect.bottom - player_rect.top
+            else:
+                overlap_y = player_rect.bottom - enemy_rect.top
+
+            if overlap_x <= 0 or overlap_y <= 0:
+                continue
+
+            # Empujamos SOLO al jugador fuera del enemigo
+            if overlap_x < overlap_y:
+                # mover jugador en X
+                if dx > 0:
+                    self.player.x += overlap_x
+                else:
+                    self.player.x -= overlap_x
+            else:
+                # mover jugador en Y
+                if dy > 0:
+                    self.player.y += overlap_y
+                else:
+                    self.player.y -= overlap_y
+
+            # actualizar rect del jugador tras moverlo
+            player_rect.x = int(self.player.x + self.player.hitbox_offset_x)
+            player_rect.y = int(self.player.y + self.player.hitbox_offset_y)
+
 
     def handle_player_attack_collisions(self):
 
@@ -905,6 +974,57 @@ class Game:
                     txt_ready,
                     (margin, SCREEN_HEIGTH - txt_special.get_height() - margin - txt_ready.get_height() - 4)
                 )
+    
+         # -----------------------------------
+        # Barra de vida del JEFE (si existe)
+        # -----------------------------------
+        # Verificar si hay un jefe vivo en pantalla
+        boss = None
+        for e in self.enemies:
+            if hasattr(e, "is_boss") or e.__class__.__name__.lower().startswith("boss"):
+                boss = e
+                break
+
+        if boss and boss.alive:
+            # Ajustes de tamaño
+            boss_bar_width = 250
+            boss_bar_height = 22
+            margin = 20
+
+            # Posición (arriba a la derecha)
+            x = SCREEN_WIDTH - boss_bar_width - margin
+            y = margin
+
+            # Fondo oscuro de la barra
+            pygame.draw.rect(
+                self.screen,
+                (60, 0, 0),
+                pygame.Rect(x, y, boss_bar_width, boss_bar_height),
+                border_radius=4
+            )
+
+            # Vida actual
+            ratio = max(0.0, boss.health / boss.max_health)
+            pygame.draw.rect(
+                self.screen,
+                (255, 0, 80),   # rojo brillante estilo "boss"
+                pygame.Rect(x, y, int(boss_bar_width * ratio), boss_bar_height),
+                border_radius=4
+            )
+
+            # Marco
+            pygame.draw.rect(
+                self.screen,
+                (255, 255, 255),
+                pygame.Rect(x, y, boss_bar_width, boss_bar_height),
+                2,
+                border_radius=4
+            )
+
+            # Texto opcional
+            font = pygame.font.SysFont("arial", 18, bold=True)
+            txt = font.render(f"Boss HP: {int(boss.health)}/{int(boss.max_health)}", True, (255, 230, 230))
+            self.screen.blit(txt, (x + boss_bar_width//2 - txt.get_width()//2, y + boss_bar_height + 4))
 
 
 

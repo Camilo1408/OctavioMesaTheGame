@@ -8,6 +8,8 @@ from core.settings import (
     ENEMY_BASE_HEALTH,
     ENEMY_ATTACK_RANGE,
     ENEMY_ATTACK_COOLDOWN,
+    MAP_HEIGHT_PX,
+    MAP_WIDTH_PX
 )
 from graphics.sprite_sheet import SpriteSheet
 
@@ -88,9 +90,9 @@ class BossDiablo(Entity):
 
         # Mapeos de filas (revisa si las direcciones coinciden visualmente)
         # Supuesto clásico: 0=down, 1=left, 2=right, 3=up
-        idle_rows = {"down": 0, "left": 1, "right": 2, "up": 3}
-        walk_rows = {"down": 0, "left": 1, "right": 2, "up": 3}
-        attack_rows = {"down": 0, "left": 1, "right": 2, "up": 3}
+        idle_rows = {"down": 2, "left": 1, "right": 3, "up": 0}
+        walk_rows = {"down": 2, "left": 1, "right": 3, "up": 0}
+        attack_rows = {"down": 2, "left": 1, "right": 3, "up": 0}
         death_row = 0  # una sola fila para muerte
 
         # Idle (2 frames)
@@ -122,11 +124,13 @@ class BossDiablo(Entity):
         self.width = first_frame.get_width()
         self.height = first_frame.get_height()
 
-        # Hitbox del cuerpo
-        self.hitbox_width = int(self.width * 0.35)
-        self.hitbox_height = int(self.height * 0.55)
+        # --- Hitbox del cuerpo del Diablo ---
+        # Más pegada al contorno del cuerpo (sin incluir la lanza completa)
+        self.hitbox_width = int(self.width * 0.22)      # cuerpo relativamente estrecho
+        self.hitbox_height = int(self.height * 0.27)    # parte baja del cuerpo
         self.hitbox_offset_x = (self.width - self.hitbox_width) // 2
-        self.hitbox_offset_y = (self.height - self.hitbox_height) // 2
+        # la subimos para que quede en piernas/torso, no flotando en el centro
+        self.hitbox_offset_y = self.height - self.hitbox_height - 130
 
         # Rect para colisiones generales (igual que Enemy)
         self._rect = pygame.Rect(self.x, self.y, self.width, self.height)
@@ -138,6 +142,36 @@ class BossDiablo(Entity):
             self.sound_attack.set_volume(0.6)
         except pygame.error:
             self.sound_attack = None  # si falla, simplemente no suena
+
+        self.is_boss = True
+
+
+    @property
+    def rect(self):
+        """Hitbox real del Diablo usada en colisiones y daño."""
+        return pygame.Rect(
+            int(self.x + self.hitbox_offset_x),
+            int(self.y + self.hitbox_offset_y),
+            self.hitbox_width,
+            self.hitbox_height,
+        )
+
+
+    def clamp_to_map(self):
+        """Evita que el Diablo salga de los límites del mapa."""
+        max_x = MAP_WIDTH_PX - self.width
+        max_y = MAP_HEIGHT_PX - self.height
+
+        if self.x < 0:
+                self.x = 0
+        elif self.x > max_x:
+                self.x = max_x
+
+        if self.y < 0:
+                self.y = 0
+        elif self.y > max_y:
+                self.y = max_y
+
 
     # ==========================================================
     # Helpers de animación / estado
@@ -158,27 +192,36 @@ class BossDiablo(Entity):
         self.current_frame_index = 0
         self.animation_timer = 0.0
 
-    def update_animation(self, dt: float):
+    def update_animation(self, dt: float,  loop: bool = True):
         if not self.current_frames:
             return
+
         self.animation_timer += dt
         if self.animation_timer >= self.animation_frame_time:
             self.animation_timer = 0.0
-            self.current_frame_index = (self.current_frame_index + 1) % len(self.current_frames)
+            self.current_frame_index += 1
+
+            if self.current_frame_index >= len(self.current_frames):
+                if loop:
+                    # volver al inicio (idle, walk, attack)
+                    self.current_frame_index = 0
+                else:
+                    # quedarnos en el último frame (muerte)
+                    self.current_frame_index = len(self.current_frames) - 1
 
     # ==========================================================
     # Daño recibido (llamado desde Game.handle_player_attack_collisions)
     # ==========================================================
     def take_damage(self, amount: float):
-        if not self.alive:
+        # Si ya está en animación de muerte, ignoramos más daño
+        if not self.alive or self.state == "death":
             return
 
         self.health -= amount
         if self.health <= 0:
             self.health = 0
-            # Pasar a animación de muerte
             self.set_state("death")
-            # seguimos "vivos" hasta terminar la animación
+            # OJO: NO ponemos self.alive = False aquí
 
     # ==========================================================
     # Lógica de IA
@@ -187,20 +230,38 @@ class BossDiablo(Entity):
         if not self.alive:
             return
 
-        # Si está en animación de muerte
+        # ---------------------------
+        # MUERTE: solo animación
+        # ---------------------------
         if self.state == "death":
-            self.update_animation(dt)
-            # cuando llegue al último frame, desaparece
-            if self.current_frame_index == len(self.current_frames) - 1:
-                self.alive = False
+            # Anim de muerte sin loop (se queda en el último frame)
+            self.update_animation(dt, loop=False)
             return
 
-        # Distancia al jugador
-        dx = (player.x - self.x)
-        dy = (player.y - self.y)
+        # --------------------------------------------------
+        # Distancia REAL usando hitboxes (no solo x,y)
+        # --------------------------------------------------
+        boss_hitbox = pygame.Rect(
+            self.x + self.hitbox_offset_x,
+            self.y + self.hitbox_offset_y,
+            self.hitbox_width,
+            self.hitbox_height,
+        )
+
+        player_hitbox = pygame.Rect(
+            player.x + player.hitbox_offset_x,
+            player.y + player.hitbox_offset_y,
+            player.hitbox_width,
+            player.hitbox_height,
+        )
+
+        dx = player_hitbox.centerx - boss_hitbox.centerx
+        dy = player_hitbox.centery - boss_hitbox.centery
         dist = math.hypot(dx, dy) or 1.0  # evitar división por 0
 
-        # Dirección hacia donde mira
+        # --------------------------------------------------
+        # Dirección a la que mira EL DIABLO
+        # --------------------------------------------------
         if abs(dx) > abs(dy):
             new_dir = "right" if dx > 0 else "left"
         else:
@@ -209,61 +270,124 @@ class BossDiablo(Entity):
 
         now = pygame.time.get_ticks() / 1000.0
 
-        # Si está en rango y se acabó el cooldown -> atacar
-        if dist <= self.attack_range and now - self.last_attack_time >= self.attack_cooldown:
+        # --------------------------------------------------
+        # ¿Está en rango para atacar? (usando el área real de ataque)
+        # --------------------------------------------------
+        attack_area = self.get_attack_hitbox()   # usa self.direction + self.rect
+        in_range = attack_area is not None and attack_area.colliderect(player_hitbox)
+
+        can_attack = (
+            in_range and (now - self.last_attack_time) >= self.attack_cooldown
+        )
+
+        if can_attack:
             self.set_state("attack")
             self.last_attack_time = now
             self.attack_executed = False
-            # en ataque, no se mueve; animación manejará el golpe
+
+        # --------------------------------------------------
+        # SI ESTÁ ATACANDO → NO MOVER, SOLO ANIM Y DAÑO
+        # --------------------------------------------------
+        if self.state == "attack":
+            self.update_animation(dt)
+            total = len(self.current_frames)
+            if total == 0:
+                return
+            mid = total // 2
+
+            # Frame donde "conecta" el golpe
+            if self.current_frame_index == mid and not self.attack_executed:
+                if self.sound_attack:
+                    self.sound_attack.play()
+
+                atk_rect = self.get_attack_hitbox()
+                if atk_rect is not None and atk_rect.colliderect(player_hitbox):
+                    player.take_damage(self.damage)
+
+                self.attack_executed = True
+
+            # Cuando termina animación de ataque, volver a idle
+            if self.current_frame_index == total - 1:
+                self.set_state("idle")
+
+            return  # 🔴 IMPORTANTE: no seguir con lógica de caminar
+
+        # --------------------------------------------------
+        # SI NO ESTÁ ATACANDO:
+        #   - si está muy cerca, quedarse quieto (idle)
+        #   - si está más lejos, caminar hacia Octavio
+        # --------------------------------------------------
+        MIN_SEPARATION = 16  # para que respete hitboxes y no empuje tanto
+
+        if dist <= max(self.attack_range * 0.9, MIN_SEPARATION) or in_range:
+            # Muy cerca o ya dentro del área de ataque → quieto, mirando al jugador
+            self.set_state("idle")
+            self.update_animation(dt)
         else:
-            # Movimiento hacia Octavio
+            # Perseguir caminando
             self.set_state("walk")
             speed = self.speed
             self.x += (dx / dist) * speed
             self.y += (dy / dist) * speed
+
+            # No salir del mapa
+            self.clamp_to_map()
+
+            # Animación de caminar
             self.update_animation(dt)
 
-        # Rect en la nueva posición
+        # Actualizar rect global
         self._rect.x = int(self.x)
         self._rect.y = int(self.y)
-
-        # Si está atacando, gestionar golpe en frame medio
-        if self.state == "attack":
-            self.update_animation(dt)
-            total = len(self.current_frames)
-            mid = total // 2
-
-            if self.current_frame_index == mid and not self.attack_executed:
-                if self.sound_attack:
-                    self.sound_attack.play()
-                if player.rect.colliderect(self.get_attack_hitbox()):
-                    # usamos daño del jefe; si quieres multiplicar por daño base, hazlo en settings
-                    player.take_damage(self.damage)
-                self.attack_executed = True
-
-            # Cuando termina la animación, volvemos a idle
-            if self.current_frame_index == total - 1:
-                self.set_state("idle")
 
     # ==========================================================
     # Campo de ataque del jefe (similar al Enemy)
     # ==========================================================
     def get_attack_hitbox(self):
-        base = pygame.Rect(
-            self.x + self.hitbox_offset_x,
-            self.y + self.hitbox_offset_y,
-            self.hitbox_width,
-            self.hitbox_height
-        )
+        """
+        Área de ataque del Diablo, basada en su hitbox real (rect).
+        Ajustada para que hacia abajo quede pegada a los pies y no tan ancha.
+        """
+
+        base = self.rect  # usamos la hitbox del cuerpo como referencia
+
+        # Márgenes finos
+        side_margin = 4   # más pequeño → más cerca del cuerpo
+        vertical_range = int(self.hitbox_height * 0.7)
+        horizontal_range = int(self.hitbox_width * 0.7)
 
         if self.direction == "up":
-            return pygame.Rect(base.centerx - 30, base.top - 40, 60, 40)
-        if self.direction == "down":
-            return pygame.Rect(base.centerx - 30, base.bottom, 60, 40)
-        if self.direction == "left":
-            return pygame.Rect(base.left - 40, base.centery - 20, 40, 40)
-        return pygame.Rect(base.right, base.centery - 20, 40, 40)
+            return pygame.Rect(
+                base.left - side_margin,
+                base.top - vertical_range,
+                base.width + side_margin * 2,
+                vertical_range,
+            )
 
+        elif self.direction == "down":
+            # 🔥 Pegado justo a los pies del Diablo
+            return pygame.Rect(
+                base.left - side_margin,
+                base.bottom,                  # sin hueco, justo debajo del cuerpo
+                base.width + side_margin * 2,
+                vertical_range,
+            )
+
+        elif self.direction == "left":
+            return pygame.Rect(
+                base.left - horizontal_range,
+                base.top - side_margin,
+                horizontal_range,
+                base.height + side_margin * 2,
+            )
+
+        else:  # "right"
+            return pygame.Rect(
+                base.right,
+                base.top - side_margin,
+                horizontal_range,
+                base.height + side_margin * 2,
+            )
     # ==========================================================
     # Dibujar en pantalla (llamado desde Game.draw)
     # ==========================================================
