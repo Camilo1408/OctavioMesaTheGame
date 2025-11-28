@@ -6,7 +6,7 @@ from core.settings import MAP_WIDTH_PX, MAP_HEIGHT_PX, PLAYER_MAX_HEALTH, BANDAG
 
 
 class Player:
-    def __init__(self, x, y, sprite_path=None, sprite_size=64, unarmed_row=39, armed_row=10, frames_per_direction=None, row_index_base=0):
+    def __init__(self, x, y, sprite_path=None, sprite_size=64, unarmed_row=39, armed_row=10, frames_per_direction=None, row_index_base=0, sound_manager=None):
         """Player with configurable sprite sheet layout."""
         self.max_health = PLAYER_MAX_HEALTH
         self.health = self.max_health
@@ -22,6 +22,11 @@ class Player:
 
         # --- Sprint 4: contador de bajas para habilidades especiales ---
         self.special_kill_counter = 0
+
+        # --- Sistema de inmunidad ---
+        self.is_immune = False
+        self.immunity_timer = 0.0
+        self.immunity_duration = 0.0
 
         self.x = x
         self.y = y
@@ -45,9 +50,8 @@ class Player:
         self.death_animation_speed = 0.10
         self.death_animation_timer = 0.0
 
-        sound_path = os.path.join(os.path.dirname(__file__), "..", "assets", "sounds")
-        self.snd_slash_o = pygame.mixer.Sound(os.path.join(sound_path, "SlashO.mp3"))
-        self.snd_slash_o.set_volume(0.7)
+        # Gestor de sonidos
+        self.sound_manager = sound_manager
 
 
 
@@ -328,7 +332,8 @@ class Player:
         self.attack_timer = 0.0
         self.animation_frame = 0
 
-        self.snd_slash_o.play()
+        if self.sound_manager:
+            self.sound_manager.play("octavio_attack")        
 
         # Usamos la dirección actual de mirada
         self.current_animation = f'attack_{self.facing}'
@@ -356,7 +361,15 @@ class Player:
 
             return  # no se mueve ni ataca durante la muerte
         
-            # 2) Animación de daño (hurt) sencilla: pequeño “stun” muy corto
+        # --- Actualizar inmunidad ---
+        if self.is_immune:
+            self.immunity_timer += dt
+            if self.immunity_timer >= self.immunity_duration:
+                self.is_immune = False
+                self.immunity_timer = 0.0
+                print("[PLAYER] Inmunidad terminada")
+
+        # 2) Animación de daño (hurt) sencilla: pequeño “stun” muy corto
         # --- Actualizar efecto de daño (hurt flash) ---
         if self.is_hurt:
             self.hurt_timer -= dt
@@ -662,6 +675,15 @@ class Player:
     def take_damage(self, amount: float):
         """Aplica daño al jugador y activa el efecto de daño (hurt flash)."""
         # Si el daño es cero o negativo, no hacemos nada
+
+        # Si está inmune, no recibe daño
+        if self.is_immune:
+            return
+        
+        # Si ya está en animación de muerte, ignoramos más daño
+        if self.is_dying:
+            return
+
         if amount <= 0:
             return
 
@@ -701,8 +723,7 @@ class Player:
     def can_use_special_spiral(self):
         from core.settings import SPECIAL_SPIRAL_KILLS
         return self.special_kill_counter >= SPECIAL_SPIRAL_KILLS
-
-
+    
     def take_damage(self, amount: float):
         """Aplica daño al jugador, lanzando animación de daño o muerte."""
         # Si ya está en animación de muerte, ignoramos más daño
@@ -726,6 +747,8 @@ class Player:
             return
         self.is_hurt = True
         self.hurt_timer = 0.0
+        if self.sound_manager:
+            self.sound_manager.play("octavio_hurt")
 
     def start_death_animation(self):
         """Inicia la animación de muerte del jugador."""
@@ -741,6 +764,8 @@ class Player:
         frames = self.death_animations.get(self.facing, [])
         if frames:
             self.image = frames[0]
+            if self.sound_manager:
+                self.sound_manager.play("octavio_death")
 
     def get_swing_base_image(self):
         """Devuelve la imagen base del swing para que el Game la use en especiales."""
@@ -774,4 +799,11 @@ class Player:
                 x = col * frame_width
                 frame = sheet.subsurface((x, y, frame_width, frame_height))
                 self.swing_frames[direction].append(frame)
+    
+    def activate_immunity(self, duration=10.0):
+        """Activa inmunidad temporal."""
+        self.is_immune = True
+        self.immunity_timer = 0.0
+        self.immunity_duration = duration
+        print(f"[PLAYER] ¡Inmunidad activada por {duration} segundos!")
 

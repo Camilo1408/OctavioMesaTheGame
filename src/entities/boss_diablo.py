@@ -27,13 +27,16 @@ class BossDiablo(Entity):
       - .get_attack_hitbox()
     """
 
-    def __init__(self, x, y):
+    def __init__(self, x, y, sound_manager=None):
         # tamaño base del sprite (cada celda)
         cell = 192
         super().__init__(x, y, cell, cell, speed=1.6)
 
         # Escala para que se vea más grande que Octavio
         self.scale = 2.0
+
+        # Gestor de sonidos
+        self.sound_manager = sound_manager
 
         # --- Estadísticas del jefe ---
         # Mucha más vida que un enemigo normal
@@ -135,14 +138,6 @@ class BossDiablo(Entity):
         # Rect para colisiones generales (igual que Enemy)
         self._rect = pygame.Rect(self.x, self.y, self.width, self.height)
 
-        # --- Sonido del ataque ---
-        snd_path = os.path.join(os.path.dirname(__file__), "..", "assets", "Sounds", "SlashD.mp3")
-        try:
-            self.sound_attack = pygame.mixer.Sound(snd_path)
-            self.sound_attack.set_volume(0.6)
-        except pygame.error:
-            self.sound_attack = None  # si falla, simplemente no suena
-
         self.is_boss = True
 
 
@@ -213,7 +208,6 @@ class BossDiablo(Entity):
     # Daño recibido (llamado desde Game.handle_player_attack_collisions)
     # ==========================================================
     def take_damage(self, amount: float):
-        # Si ya está en animación de muerte, ignoramos más daño
         if not self.alive or self.state == "death":
             return
 
@@ -221,7 +215,11 @@ class BossDiablo(Entity):
         if self.health <= 0:
             self.health = 0
             self.set_state("death")
-            # OJO: NO ponemos self.alive = False aquí
+            if self.sound_manager:
+                self.sound_manager.play("diablo_death")
+        else:
+            if self.sound_manager:
+                self.sound_manager.play("diablo_hurt")
 
     # ==========================================================
     # Lógica de IA
@@ -300,8 +298,8 @@ class BossDiablo(Entity):
 
             # Frame donde "conecta" el golpe
             if self.current_frame_index == mid and not self.attack_executed:
-                if self.sound_attack:
-                    self.sound_attack.play()
+                if self.sound_manager:
+                    self.sound_manager.play("diablo_attack")
 
                 atk_rect = self.get_attack_hitbox()
                 if atk_rect is not None and atk_rect.colliderect(player_hitbox):
